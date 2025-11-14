@@ -38,6 +38,10 @@ pub struct Config {
     /// Optional directory containing credential files to preload at startup.
     /// Env: `CRED_PATH`. Example: `./credentials`. Default: unset (skip preload).
     pub cred_path: Option<PathBuf>,
+
+    /// Allow HTTP/2 multiplexing for reqwest clients; disabled forces HTTP/1.
+    /// Env: `ENABLE_MULTIPLEXING`. Default: `false`.
+    pub enable_multiplexing: bool,
 }
 
 impl Default for Config {
@@ -50,6 +54,7 @@ impl Default for Config {
             refresh_concurrency: 10,
             bigmodel_list: Vec::new(),
             cred_path: None,
+            enable_multiplexing: false,
         }
     }
 }

@@ -33,6 +33,9 @@ impl GoogleOauthService {
                 .expect("invalid PROXY url for GoogleOauthService");
             builder = builder.proxy(proxy);
         }
+        if !CONFIG.enable_multiplexing {
+            builder = builder.http1_only();
+        }
         let client = builder
             .build()
             .expect("FATAL: initialize GoogleOauthService HTTP client failed");

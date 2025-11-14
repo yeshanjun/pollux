@@ -17,6 +17,9 @@ impl NexusState {
                 .expect("invalid PROXY url for reqwest client");
             builder = builder.proxy(proxy);
         }
+        if !CONFIG.enable_multiplexing {
+            builder = builder.http1_only();
+        }
         let client = builder
             .build()
             .expect("failed to build reqwest client for proxy");

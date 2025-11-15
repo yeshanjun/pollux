@@ -5,7 +5,8 @@ use figment::{
     providers::{Env, Serialized},
 };
 use reqwest;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
+use serde_json::Value;
 use url::Url;
 
 /// Application configuration managed by Figment.
@@ -13,34 +14,43 @@ use url::Url;
 pub struct Config {
     /// Database URL for SQLite.
     /// Env: `DATABASE_URL`. Default: `sqlite://data.db`.
+    #[serde(default)]
     pub database_url: String,
 
     /// Log level for tracing subscriber initialization (e.g., "error", "warn", "info", "debug", "trace").
     /// Env: `LOGLEVEL`. Default: `info`.
+    #[serde(default)]
     pub loglevel: String,
 
     /// Optional upstream HTTP proxy. If set, used for reqwest clients.
     /// Env: `PROXY`. Example: `http://127.0.0.1:1080`.
+    #[serde(default)]
     pub proxy: Option<Url>,
 
     /// Authentication key for inbound request validation (required, non-empty).
     /// Env: `NEXUS_KEY`. Must be provided.
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_string_lax")]
     pub nexus_key: String,
 
     /// Max concurrent Google OAuth refreshes processed by the worker.
     /// Env: `REFRESH_CONCURRENCY`. Default: `10`.
+    #[serde(default)]
     pub refresh_concurrency: usize,
 
     /// List of Gemini model names treated as "big" models.
     /// Env: `BIGMODEL_LIST`. Default: empty.
+    #[serde(default)]
     pub bigmodel_list: Vec<String>,
 
     /// Optional directory containing credential files to preload at startup.
     /// Env: `CRED_PATH`. Example: `./credentials`. Default: unset (skip preload).
+    #[serde(default)]
     pub cred_path: Option<PathBuf>,
 
     /// Allow HTTP/2 multiplexing for reqwest clients; disabled forces HTTP/1.
     /// Env: `ENABLE_MULTIPLEXING`. Default: `false`.
+    #[serde(default)]
     pub enable_multiplexing: bool,
 }
 
@@ -50,7 +60,7 @@ impl Default for Config {
             database_url: "sqlite://data.db".to_string(),
             loglevel: "info".to_string(),
             proxy: None,
-            nexus_key: String::new(),
+            nexus_key: "pwd".to_string(),
             refresh_concurrency: 10,
             bigmodel_list: Vec::new(),
             cred_path: None,
@@ -77,6 +87,21 @@ impl Config {
             panic!("NEXUS_KEY must be set and non-empty");
         }
         cfg
+    }
+}
+
+fn deserialize_string_lax<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let v = Value::deserialize(deserializer)?;
+
+    match v {
+        Value::String(s) => Ok(s),
+        Value::Number(n) => Ok(n.to_string()),
+        _ => Err(serde::de::Error::custom(
+            "expected a string or a number for NEXUS_KEY",
+        )),
     }
 }
 

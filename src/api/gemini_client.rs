@@ -42,7 +42,8 @@ impl GeminiClient {
         let retry_policy = ExponentialBuilder::default()
             .with_min_delay(Duration::from_millis(100))
             .with_max_delay(Duration::from_secs(1))
-            .with_max_times(3);
+            .with_max_times(3)
+            .with_jitter();
         Self {
             client,
             retry_policy,
@@ -187,6 +188,13 @@ impl GeminiClient {
 
         op.retry(&self.retry_policy)
             .when(|err: &NexusError| err.is_retryable())
+            .notify(|err, dur: Duration| {
+                error!(
+                    "GeminiCLI Retrying Error {} with sleeping {:?}",
+                    err.to_string(),
+                    dur
+                );
+            })
             .await
     }
 

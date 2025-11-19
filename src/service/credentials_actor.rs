@@ -383,10 +383,11 @@ impl CredentialsActor {
         model_name: String,
     ) {
         let tier = ModelTier::from_model(&state.model_classifier, &model_name);
-        debug!(
-            "GetCredential start tier={}, queue_len={}, cooling_big={}, cooling_tiny={}",
+        info!(
+            "GetCredential start tier={}, queue_len={}, total_creds={}, cooling_big={}, cooling_tiny={}",
             tier.label(),
             state.queue_len(tier),
+            state.creds.len(),
             state.cooling_down_big.len(),
             state.cooling_down_tiny.len()
         );

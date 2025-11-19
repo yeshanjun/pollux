@@ -10,7 +10,7 @@ use reqwest::StatusCode;
 use serde_json::Value;
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 // Refresh pipeline tuning moved to Config.refresh_concurrency.
 
@@ -178,6 +178,13 @@ async fn refresh_inner(
         (|| async { GoogleOauthEndpoints::refresh_access_token(creds, client.clone()).await })
             .retry(retry_policy)
             .when(|e: &NexusError| e.is_retryable())
+            .notify(|err, dur: Duration| {
+                error!(
+                    "Google Oauth2 Retrying Error {} with sleeping {:?}",
+                    err.to_string(),
+                    dur
+                );
+            })
             .await?;
     let mut payload: Value = serde_json::to_value(&payload)?;
     debug!("Token response payload: {}", payload);

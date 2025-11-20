@@ -3,7 +3,7 @@ services:
     image: ghcr.io/Yoo1tic/gcli-nexus:latest
     container_name: gcli-nexus
     ports:
-      - "8000:8000"
+      - "8188:8188"
     environment:
       # Required configuration
       NEXUS_KEY: pwd

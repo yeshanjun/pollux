@@ -6,7 +6,7 @@ use backon::{ExponentialBuilder, Retryable};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use futures::stream::{self, StreamExt};
-use reqwest::StatusCode;
+use reqwest::header::{CONNECTION, HeaderMap, HeaderValue};
 use serde_json::Value;
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
@@ -16,8 +16,6 @@ use tracing::{debug, error, info, warn};
 
 /// Service layer to compose Google OAuth operations.
 pub struct GoogleOauthService {
-    client: reqwest::Client,
-    retry_policy: ExponentialBuilder,
     refresh_tx: mpsc::UnboundedSender<RefreshJob>,
 }
 
@@ -30,32 +28,38 @@ impl Default for GoogleOauthService {
 impl GoogleOauthService {
     /// Create a new service with a preconfigured HTTP client.
     pub fn new() -> Self {
+        let mut headers = HeaderMap::new();
         let mut builder = reqwest::Client::builder()
             .user_agent("geminicli-oauth/1.0".to_string())
             .connect_timeout(Duration::from_secs(5))
             .timeout(Duration::from_secs(15));
         if let Some(proxy_url) = CONFIG.proxy.clone() {
             let proxy = reqwest::Proxy::all(proxy_url.as_str())
-                .expect("invalid PROXY url for GoogleOauthService");
+                .expect("invalid PROXY url for reqwest client");
             builder = builder.proxy(proxy);
         }
         if !CONFIG.enable_multiplexing {
+            headers.insert(CONNECTION, HeaderValue::from_static("close"));
+
             builder = builder.http1_only().pool_max_idle_per_host(0);
+        } else {
+            builder = builder.http2_adaptive_window(true);
         }
         let client = builder
+            .default_headers(headers)
             .build()
             .expect("FATAL: initialize GoogleOauthService HTTP client failed");
         let retry_policy = ExponentialBuilder::default()
-            .with_min_delay(Duration::from_secs(3))
-            .with_max_delay(Duration::from_secs(5))
-            .with_max_times(2);
+            .with_min_delay(Duration::from_secs(1))
+            .with_max_delay(Duration::from_secs(3))
+            .with_max_times(2)
+            .with_jitter();
 
         // Refresh pipeline: unbounded channel + concurrent worker
         let (refresh_tx, refresh_rx) = mpsc::unbounded_channel::<RefreshJob>();
 
         // Spawn background refresh worker using buffer_unordered semantics.
         // Extra refresh requests will queue in the channel (unbounded).
-        let client_cloned = client.clone();
         let refresh_concurrency = CONFIG.refresh_concurrency.max(1);
         tokio::spawn(async move {
             info!(
@@ -90,11 +94,7 @@ impl GoogleOauthService {
             info!("Refresh worker stopped (channel closed)");
         });
 
-        Self {
-            client: client_cloned,
-            retry_policy,
-            refresh_tx,
-        }
+        Self { refresh_tx }
     }
 
     /// Get a clone of the refresh job sender.
@@ -116,47 +116,6 @@ impl GoogleOauthService {
             .map_err(|e| NexusError::RactorError(format!("send refresh job failed: {}", e)))?;
         rx.await
             .map_err(|e| NexusError::RactorError(format!("recv refresh result failed: {}", e)))?
-    }
-
-    /// Refresh access token and update the given credentials.
-    pub async fn refresh_credentials(
-        &self,
-        creds: &mut GoogleCredential,
-    ) -> Result<(), NexusError> {
-        refresh_inner(self.client.clone(), self.retry_policy, creds).await
-    }
-
-    /// Fetch userinfo and update the credential's email field using `update_credential`.
-    pub async fn update_email_from_userinfo(
-        &self,
-        creds: &mut GoogleCredential,
-    ) -> Result<(), NexusError> {
-        let resp =
-            (|| async { GoogleOauthEndpoints::fetch_userinfo(creds, self.client.clone()).await })
-                .retry(self.retry_policy)
-                .when(|e: &NexusError| match e {
-                    // Do NOT retry on 401/403; retry on other reqwest errors
-                    NexusError::ReqwestError(err) => !matches!(
-                        err.status(),
-                        Some(StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN)
-                    ),
-                    // Retry all other errors
-                    _ => true,
-                })
-                .await?;
-        let status = resp.status();
-        let body = resp.text().await?;
-        debug!(status = %status, body = %body, "Userinfo response");
-        let v: serde_json::Value = serde_json::from_str(&body)?;
-        let email = v
-            .get("email")
-            .and_then(|x| x.as_str())
-            .ok_or(crate::error::NexusError::MissingEmailInUserinfo)?
-            .to_string();
-
-        let payload = serde_json::json!({"email": email});
-        creds.update_credential(&payload)?;
-        Ok(())
     }
 }
 

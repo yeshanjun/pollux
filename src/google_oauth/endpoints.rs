@@ -1,4 +1,4 @@
-use crate::config::{GOOGLE_AUTH_URL, GOOGLE_TOKEN_URI, GOOGLE_USERINFO_URI};
+use crate::config::{GOOGLE_AUTH_URL, GOOGLE_TOKEN_URI};
 use crate::error::NexusError;
 use crate::google_oauth::credentials::GoogleCredential;
 
@@ -32,29 +32,6 @@ impl GoogleOauthEndpoints {
             creds.project_id
         );
         Ok(token_result)
-    }
-
-    pub(super) async fn fetch_userinfo(
-        creds: &GoogleCredential,
-        http_client: reqwest::Client,
-    ) -> Result<reqwest::Response, NexusError> {
-        let token = creds
-            .access_token
-            .as_ref()
-            .ok_or(NexusError::MissingAccessToken)?;
-
-        let resp = http_client
-            .get(GOOGLE_USERINFO_URI.as_str())
-            .bearer_auth(token)
-            .header("Accept", "application/json")
-            .send()
-            .await?
-            .error_for_status()?;
-        info!(
-            "Project_ID: {}, Fetch UserInfo successfully",
-            creds.project_id
-        );
-        Ok(resp)
     }
 }
 

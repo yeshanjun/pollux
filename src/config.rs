@@ -1,5 +1,3 @@
-use std::{path::PathBuf, sync::LazyLock};
-
 use figment::{
     Figment,
     providers::{Env, Serialized},
@@ -7,11 +5,26 @@ use figment::{
 use reqwest;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
+use std::{
+    net::{IpAddr, Ipv4Addr},
+    path::PathBuf,
+    sync::LazyLock,
+};
 use url::Url;
 
 /// Application configuration managed by Figment.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
+    /// HTTP server listen address (e.g., "0.0.0.0", "127.0.0.1").
+    /// Env: `LISTEN_ADDR`. Default: `0.0.0.0`.
+    #[serde(default = "default_listen_ip")]
+    pub listen_addr: IpAddr,
+
+    /// HTTP server listen port.
+    /// Env: `LISTEN_PORT`. Default: `8188`.
+    #[serde(default = "default_listen_port")]
+    pub listen_port: u16,
+
     /// Database URL for SQLite.
     /// Env: `DATABASE_URL`. Default: `sqlite://data.db`.
     #[serde(default)]
@@ -57,6 +70,8 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            listen_addr: default_listen_ip(),
+            listen_port: default_listen_port(),
             database_url: "sqlite://data.db".to_string(),
             loglevel: "info".to_string(),
             proxy: None,
@@ -142,3 +157,13 @@ pub static GEMINI_STREAM_URL: LazyLock<reqwest::Url> = LazyLock::new(|| {
     )
     .expect("valid Cloud Code streamGenerateContent URL with alt=sse")
 });
+
+/// Default IP address for the HTTP server listen address.
+pub fn default_listen_ip() -> IpAddr {
+    Ipv4Addr::new(0, 0, 0, 0).into()
+}
+
+/// Default port for the HTTP server.
+pub fn default_listen_port() -> u16 {
+    8188
+}

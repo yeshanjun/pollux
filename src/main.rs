@@ -1,4 +1,5 @@
 use mimalloc::MiMalloc;
+use std::net::SocketAddr;
 use tokio::{net::TcpListener, signal};
 use tracing::{info, warn};
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
@@ -17,6 +18,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with(env_filter)
         .with(
             tracing_subscriber::fmt::layer()
+                .compact()
                 .with_level(true)
                 .with_target(false),
         )
@@ -26,7 +28,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         database_url = %cfg.database_url,
         proxy = %cfg.proxy.as_ref().map(|u| u.as_str()).unwrap_or("<none>"),
         loglevel = %cfg.loglevel,
-        nexus_key = %cfg.nexus_key
+        nexus_key = %cfg.nexus_key,
+        listen_addr = %cfg.listen_addr,
+        listen_port = cfg.listen_port
     );
 
     let _ = gcli_nexus::config::CONFIG.nexus_key.len();
@@ -73,7 +77,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let state = gcli_nexus::router::NexusState::new(handle.clone());
     let app = gcli_nexus::router::nexus_router(state);
 
-    let addr = "0.0.0.0:8000";
+    let addr = SocketAddr::from((cfg.listen_addr, cfg.listen_port));
     let listener = TcpListener::bind(addr).await?;
     info!("HTTP server listening on {}", addr);
     axum::serve(listener, app)

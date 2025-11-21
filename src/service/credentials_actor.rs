@@ -6,7 +6,7 @@ use crate::google_oauth::service::{GoogleOauthService, RefreshJob};
 use crate::service::classifier::{BigModelList, ModelClassifier};
 
 use ractor::{Actor, ActorProcessingErr, ActorRef, RpcReplyPort};
-use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::str::FromStr;
 use std::time::Duration;
@@ -177,14 +177,22 @@ impl CredentialsActorState {
     }
 
     fn push_back_all(&mut self, id: CredentialId) {
-        self.bigmodel_queue.push_back(id);
-        self.tinymodel_queue.push_back(id);
+        self.push_back_for_tier(id, ModelTier::Big);
+        self.push_back_for_tier(id, ModelTier::Tiny);
     }
 
     fn push_back_for_tier(&mut self, id: CredentialId, tier: ModelTier) {
-        match tier {
-            ModelTier::Big => self.bigmodel_queue.push_back(id),
-            ModelTier::Tiny => self.tinymodel_queue.push_back(id),
+        let queue = match tier {
+            ModelTier::Big => &mut self.bigmodel_queue,
+            ModelTier::Tiny => &mut self.tinymodel_queue,
+        };
+        if !queue.contains(&id) {
+            queue.push_back(id);
+        } else {
+            warn!(
+                "ID: {id}, already in {} queue; skip duplicate push",
+                tier.label()
+            );
         }
     }
 
@@ -241,8 +249,8 @@ impl Actor for CredentialsActor {
         // Connect to DB and load active credentials. Any failure aborts startup.
         let connect_opts = SqliteConnectOptions::from_str(CONFIG.database_url.as_str())
             .map_err(|e| ActorProcessingErr::from(format!("DB opts parse failed: {}", e)))?
-            .create_if_missing(true)
-            .journal_mode(SqliteJournalMode::Wal);
+            .create_if_missing(true);
+        // .journal_mode(SqliteJournalMode::Wal);
         let pool = SqlitePoolOptions::new()
             .connect_with(connect_opts)
             .await

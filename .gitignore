@@ -25,6 +25,7 @@ target
 
 /target
 
+*.md
 *.db*
 .env
 config.toml
@@ -34,3 +35,4 @@ credentials
 *.json
 !/.sqlx/
 !/.sqlx/*.json
+!RELEASE_NOTES.md

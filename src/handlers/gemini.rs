@@ -1,7 +1,9 @@
 use crate::api::gemini_client::GeminiClient;
-use crate::config::{GEMINI_NATIVE_MODELS, GEMINI_OAI_MODELS, GeminiModelList, OpenAIModelList};
 use crate::middleware::gemini_request::GeminiPreprocess;
 use crate::middleware::gemini_response::{build_json_response, build_stream_response};
+use crate::types::gemini_models::{
+    GEMINI_NATIVE_MODELS, GEMINI_OAI_MODELS, GeminiModelList, OpenAIModelList,
+};
 use crate::{NexusError, router::NexusState};
 use axum::{
     Json,

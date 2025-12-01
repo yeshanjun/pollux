@@ -50,10 +50,13 @@ impl NexusState {
 }
 
 pub fn nexus_router(state: NexusState) -> Router {
-    use crate::handlers::gemini::{gemini_cli_handler, gemini_models_handler};
+    use crate::handlers::gemini::{
+        gemini_cli_handler, gemini_models_handler, openai_models_handler,
+    };
     use crate::middleware::auth::RequireKeyAuth;
     Router::new()
         .route("/v1beta/models", get(gemini_models_handler))
+        .route("/v1beta/openai/models", get(openai_models_handler))
         .route("/v1beta/models/{*path}", post(gemini_cli_handler))
         .layer(middleware::from_extractor::<RequireKeyAuth>())
         .with_state(state)

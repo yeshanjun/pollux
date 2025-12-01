@@ -226,8 +226,26 @@ pub const GEMINI_NATIVE_MODELS_JSON: &str = r#"{
   ]
 }"#;
 
-pub static GEMINI_NATIVE_MODELS: LazyLock<Value> = LazyLock::new(|| {
+pub static GEMINI_NATIVE_MODELS: LazyLock<GeminiModelList> = LazyLock::new(|| {
     serde_json::from_str(GEMINI_NATIVE_MODELS_JSON).expect("embedded models JSON must be valid")
+});
+
+pub static GEMINI_OAI_MODELS: LazyLock<OpenAIModelList> = LazyLock::new(|| {
+    let data = GEMINI_NATIVE_MODELS
+        .models
+        .iter()
+        .map(|m| OpenAIModel {
+            id: m.name.clone(),
+            object: "model".to_string(),
+            owned_by: "google".to_string(),
+            display_name: m.display_name.clone(),
+        })
+        .collect();
+
+    OpenAIModelList {
+        object: "list".to_string(),
+        data,
+    }
 });
 
 // Cloud Code Gemini endpoints
@@ -251,4 +269,43 @@ pub fn default_listen_ip() -> IpAddr {
 /// Default port for the HTTP server.
 pub fn default_listen_port() -> u16 {
     8188
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GeminiModel {
+    name: String,
+    version: Option<String>,
+    display_name: String,
+    description: Option<String>,
+    input_token_limit: Option<u64>,
+    output_token_limit: Option<u64>,
+    supported_generation_methods: Option<Vec<String>>,
+    temperature: Option<f64>,
+    top_p: Option<f64>,
+    top_k: Option<u64>,
+    max_temperature: Option<f64>,
+    thinking: Option<bool>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct GeminiModelList {
+    models: Vec<GeminiModel>,
+}
+
+/// OpenAI-compatible model entry.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct OpenAIModel {
+    pub id: String,
+    pub object: String,
+    pub owned_by: String,
+    pub display_name: String,
+}
+
+/// OpenAI-compatible model list wrapper.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct OpenAIModelList {
+    pub object: String,
+    pub data: Vec<OpenAIModel>,
 }

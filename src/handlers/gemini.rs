@@ -1,15 +1,14 @@
+use crate::api::gemini_client::GeminiClient;
+use crate::config::{GEMINI_NATIVE_MODELS, GEMINI_OAI_MODELS, GeminiModelList, OpenAIModelList};
+use crate::middleware::gemini_request::GeminiPreprocess;
+use crate::middleware::gemini_response::{build_json_response, build_stream_response};
+use crate::{NexusError, router::NexusState};
 use axum::{
     Json,
     extract::State,
     response::{IntoResponse, Response},
 };
-use serde_json::Value;
-
-use crate::api::gemini_client::GeminiClient;
-use crate::config::GEMINI_NATIVE_MODELS;
-use crate::middleware::gemini_request::GeminiPreprocess;
-use crate::middleware::gemini_response::{build_json_response, build_stream_response};
-use crate::{NexusError, router::NexusState};
+use tracing::info;
 
 pub async fn gemini_cli_handler(
     State(state): State<NexusState>,
@@ -28,6 +27,13 @@ pub async fn gemini_cli_handler(
 }
 
 /// Fetch Gemini native model list via API key and proxy through Nexus.
-pub async fn gemini_models_handler() -> Result<Json<Value>, NexusError> {
-    Ok(Json(GEMINI_NATIVE_MODELS.clone()))
+pub async fn gemini_models_handler() -> Result<Json<GeminiModelList>, NexusError> {
+    info!("Incoming request: GET /v1beta/models");
+    Ok(Json((*GEMINI_NATIVE_MODELS).clone()))
+}
+
+/// Fetch Gemini models in OpenAI-compatible list format.
+pub async fn openai_models_handler() -> Result<Json<OpenAIModelList>, NexusError> {
+    info!("Incoming request: GET /v1beta/openai/models");
+    Ok(Json((*GEMINI_OAI_MODELS).clone()))
 }

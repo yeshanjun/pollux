@@ -1,7 +1,9 @@
+use axum_extra::extract::cookie::Key;
 use figment::{
     Figment,
     providers::{Env, Serialized},
 };
+use oauth2::RedirectUrl;
 use reqwest;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
@@ -136,6 +138,17 @@ pub static GOOGLE_USERINFO_URI: LazyLock<Url> = LazyLock::new(|| {
     Url::parse("https://www.googleapis.com/oauth2/v3/userinfo")
         .expect("valid Google OAuth2 userinfo URI")
 });
+
+pub static OAUTH_CALLBACK_URL: LazyLock<RedirectUrl> = LazyLock::new(|| {
+    RedirectUrl::new(format!(
+        "http://localhost:{}/oauth2callback",
+        CONFIG.listen_port
+    ))
+    .expect("valid OAuth callback URL bound to localhost with configured port")
+});
+
+/// Global cookie signing/encryption key for PrivateCookieJar.
+pub static COOKIE_KEY: LazyLock<Key> = LazyLock::new(Key::generate);
 
 pub const GCLI_CLIENT_ID: &str = env!("GCLI_CLIENT_ID");
 pub const GCLI_CLIENT_SECRET: &str = env!("GCLI_CLIENT_SECRET");

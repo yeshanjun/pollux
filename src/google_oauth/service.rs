@@ -1,10 +1,10 @@
 use super::endpoints::GoogleOauthEndpoints;
 use crate::error::NexusError;
 use crate::google_oauth::credentials::GoogleCredential;
+use crate::google_oauth::utils::attach_email_from_id_token;
+use crate::types::google_code_assist::UserTier;
 use crate::{config::CONFIG, error::IsRetryable};
 use backon::{ExponentialBuilder, Retryable};
-use base64::Engine;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use futures::stream::{self, StreamExt};
 use reqwest::header::{CONNECTION, HeaderMap, HeaderValue};
 use serde_json::Value;
@@ -13,6 +13,14 @@ use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info, warn};
 
 // Refresh pipeline tuning moved to Config.refresh_concurrency.
+
+fn default_retry_policy() -> ExponentialBuilder {
+    ExponentialBuilder::default()
+        .with_min_delay(Duration::from_secs(1))
+        .with_max_delay(Duration::from_secs(3))
+        .with_max_times(3)
+        .with_jitter()
+}
 
 /// Service layer to compose Google OAuth operations.
 pub struct GoogleOauthService {
@@ -52,11 +60,7 @@ impl GoogleOauthService {
             .default_headers(headers)
             .build()
             .expect("FATAL: initialize GoogleOauthService HTTP client failed");
-        let retry_policy = ExponentialBuilder::default()
-            .with_min_delay(Duration::from_secs(1))
-            .with_max_delay(Duration::from_secs(3))
-            .with_max_times(3)
-            .with_jitter();
+        let retry_policy = default_retry_policy();
 
         // Refresh pipeline: unbounded channel + concurrent worker
         let (refresh_tx, refresh_rx) = mpsc::unbounded_channel::<RefreshJob>();
@@ -120,6 +124,56 @@ impl GoogleOauthService {
         rx.await
             .map_err(|e| NexusError::RactorError(format!("recv refresh result failed: {}", e)))?
     }
+
+    /// Call loadCodeAssist with network-aware retries.
+    pub async fn load_code_assist_with_retry(
+        access_token: impl AsRef<str>,
+        http_client: reqwest::Client,
+    ) -> Result<Value, NexusError> {
+        let retry_policy = default_retry_policy();
+
+        (|| async {
+            GoogleOauthEndpoints::load_code_assist(access_token.as_ref(), http_client.clone()).await
+        })
+        .retry(retry_policy)
+        .when(|e: &NexusError| e.is_retryable())
+        .notify(|err, dur: Duration| {
+            warn!(
+                "loadCodeAssist retrying after error {}, sleeping {:?}",
+                err, dur
+            );
+        })
+        .await
+    }
+
+    /// Provision a companion project with network-aware retries (no polling).
+    pub async fn onboard_code_assist_with_retry(
+        access_token: impl AsRef<str>,
+        tier: UserTier,
+        cloudaicompanion_project: Option<String>,
+        http_client: reqwest::Client,
+    ) -> Result<Value, NexusError> {
+        let retry_policy = default_retry_policy();
+
+        (|| async {
+            GoogleOauthEndpoints::onboard_code_assist(
+                access_token.as_ref(),
+                tier,
+                cloudaicompanion_project.clone(),
+                http_client.clone(),
+            )
+            .await
+        })
+        .retry(retry_policy)
+        .when(|e: &NexusError| e.is_retryable())
+        .notify(|err, dur: Duration| {
+            warn!(
+                "onboardCodeAssist retrying after error {}, sleeping {:?}",
+                err, dur
+            );
+        })
+        .await
+    }
 }
 
 /// Refresh request item used by the background refresh pipeline.
@@ -150,22 +204,7 @@ async fn refresh_inner(
             .await?;
     let mut payload: Value = serde_json::to_value(&payload)?;
     debug!("Token response payload: {}", payload);
-    if let Some(email) = payload
-        .get("id_token")
-        .and_then(|t| t.as_str())
-        .and_then(|token| token.split('.').nth(1))
-        .and_then(|payload_b64| URL_SAFE_NO_PAD.decode(payload_b64).ok())
-        .and_then(|decoded| serde_json::from_slice::<Value>(&decoded).ok())
-        .and_then(|payload_json| {
-            payload_json
-                .get("email")
-                .and_then(|e| e.as_str())
-                .map(|s| s.to_string())
-        })
-        && let Some(obj) = payload.as_object_mut()
-    {
-        obj.insert("email".to_string(), Value::String(email));
-    }
+    attach_email_from_id_token(&mut payload);
     creds.update_credential(&payload)?;
     Ok(())
 }

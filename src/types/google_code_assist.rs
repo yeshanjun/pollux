@@ -1,4 +1,7 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+use crate::NexusError;
 
 #[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -41,6 +44,23 @@ impl LoadCodeAssistResponse {
                     .and_then(|t| t.quota_tier.clone())
             })
             .unwrap_or(UserTier::Legacy)
+    }
+
+    pub fn ensure_eligible(&self, original_json: Value) -> Result<(), NexusError> {
+        if let Some(ineligible) = self.ineligible_tiers.first() {
+            return Err(NexusError::OauthFlowError {
+                code: ineligible
+                    .reason_code
+                    .clone()
+                    .unwrap_or_else(|| "ACCOUNT_INELIGIBLE".to_string()),
+                message: ineligible.reason_message.clone().unwrap_or_else(|| {
+                    "Account is not eligible for Gemini Code Assist".to_string()
+                }),
+                details: Some(original_json),
+            });
+        }
+
+        Ok(())
     }
 }
 

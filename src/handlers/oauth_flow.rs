@@ -140,19 +140,7 @@ async fn ensure_companion_project(
     let load_resp: LoadCodeAssistResponse =
         serde_json::from_value(load_json.clone()).map_err(NexusError::JsonError)?;
 
-    if let Some(ineligible) = load_resp.ineligible_tiers.first() {
-        return Err(NexusError::OauthFlowError {
-            code: ineligible
-                .reason_code
-                .clone()
-                .unwrap_or_else(|| "ACCOUNT_INELIGIBLE".to_string()),
-            message: ineligible
-                .reason_message
-                .clone()
-                .unwrap_or_else(|| "Account is not eligible for Gemini Code Assist".to_string()),
-            details: Some(load_json),
-        });
-    }
+    load_resp.ensure_eligible(load_json)?;
 
     let tier = load_resp.resolve_effective_tier();
 

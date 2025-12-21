@@ -212,7 +212,8 @@ impl Actor for CredentialsActor {
                 self.handle_submit_credentials(state, creds_vec).await;
             }
             CredentialsActorMessage::RefreshComplete { outcome } => {
-                self.handle_refresh_complete(state, outcome).await;
+                self.handle_refresh_complete(myself.clone(), state, outcome)
+                    .await;
             }
             CredentialsActorMessage::ActivateCredential { id, credential } => {
                 let project = credential.project_id.clone();
@@ -237,8 +238,10 @@ impl CredentialsActor {
         let query_key = model_name.as_ref();
         let assignment = state.manager.get_assigned(&query_key);
 
-        self.handle_report_invalid(myself, state, assignment.refresh_ids)
-            .await;
+        if !assignment.refresh_ids.is_empty() {
+            self.handle_report_invalid(myself, state, assignment.refresh_ids)
+                .await;
+        }
 
         if let Some(assigned) = assignment.assigned {
             debug!(
@@ -337,13 +340,16 @@ impl CredentialsActor {
 
         state.manager.delete_credential(id);
 
-        if let Err(e) = state.ops.set_status(id, false).await {
-            warn!(
-                "ID: {id}, Project: {project}, ban report failed to update DB status: {}",
-                e
-            );
-            return;
-        }
+        let ops = state.ops.clone();
+        let project_for_db = project.clone();
+        tokio::spawn(async move {
+            if let Err(e) = ops.set_status(id, false).await {
+                warn!(
+                    "ID: {id}, Project: {project_for_db}, ban report failed to update DB status: {}",
+                    e
+                );
+            }
+        });
         info!(
             "ID: {id}, Project: {project}, banned. removed_from_mem={}",
             removed_cred
@@ -374,6 +380,7 @@ impl CredentialsActor {
 
     async fn handle_refresh_complete(
         &self,
+        myself: ActorRef<CredentialsActorMessage>,
         state: &mut CredentialsActorState,
         outcome: RefreshOutcome,
     ) {
@@ -384,28 +391,40 @@ impl CredentialsActor {
                         debug!("ID: {id} Refresh completed after removal; skipping.");
                         return;
                     }
-                    debug!("ID: {id} Refresh success. Updating DB and Manager.");
+                    debug!("ID: {id} Refresh success. Updating manager and persisting.");
                     state
                         .manager
                         .add_credential(id, cred.clone(), &state.queue_keys);
-                    if let Err(e) = state.ops.update_by_id(id, cred, true).await {
-                        warn!("ID: {id} DB update failed: {}", e);
-                    }
+                    let ops = state.ops.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = ops.update_by_id(id, cred, true).await {
+                            warn!("ID: {id} DB update failed: {}", e);
+                        }
+                    });
                 }
 
                 JobInstruction::Onboard { cred } => {
                     let pid = cred.project_id.clone();
                     info!("Project: {pid} Onboard success. Inserting to DB.");
 
-                    match state.ops.upsert(cred.clone(), true).await {
-                        Ok(new_id) => {
-                            state
-                                .manager
-                                .add_credential(new_id, cred, &state.queue_keys);
-                            info!("Project: {pid} Activated with ID: {new_id}");
+                    let ops = state.ops.clone();
+                    let myself = myself.clone();
+                    tokio::spawn(async move {
+                        let cred_for_db = cred.clone();
+                        match ops.upsert(cred_for_db, true).await {
+                            Ok(new_id) => {
+                                if let Err(e) =
+                                    myself.cast(CredentialsActorMessage::ActivateCredential {
+                                        id: new_id,
+                                        credential: cred,
+                                    })
+                                {
+                                    warn!("Project: {pid} ActivateCredential failed: {}", e);
+                                }
+                            }
+                            Err(e) => warn!("Project: {pid} DB upsert failed: {}", e),
                         }
-                        Err(e) => warn!("Project: {pid} DB upsert failed: {}", e),
-                    }
+                    });
                 }
             },
 
@@ -420,9 +439,12 @@ impl CredentialsActor {
                             error!("ID: {id} Refresh failed: {}. Removing.", err);
 
                             state.manager.delete_credential(id);
-                            if let Err(e) = state.ops.set_status(id, false).await {
-                                warn!("ID: {id} DB set_status failed: {}", e);
-                            }
+                            let ops = state.ops.clone();
+                            tokio::spawn(async move {
+                                if let Err(e) = ops.set_status(id, false).await {
+                                    warn!("ID: {id} DB set_status failed: {}", e);
+                                }
+                            });
                         }
                         _ => {
                             warn!(

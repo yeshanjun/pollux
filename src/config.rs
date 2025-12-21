@@ -1,4 +1,5 @@
 use axum_extra::extract::cookie::Key;
+use backon::ExponentialBuilder;
 use figment::{
     Figment,
     providers::{Env, Serialized},
@@ -11,6 +12,7 @@ use std::{
     net::{IpAddr, Ipv4Addr},
     path::PathBuf,
     sync::LazyLock,
+    time::Duration,
 };
 use url::Url;
 
@@ -48,15 +50,15 @@ pub struct Config {
     #[serde(deserialize_with = "deserialize_string_lax")]
     pub nexus_key: String,
 
-    /// Max concurrent Google OAuth refreshes processed by the worker.
-    /// Env: `REFRESH_CONCURRENCY`. Default: `10`.
+    /// OAuth refresh requests per second (TPS) for the refresh worker.
+    /// Env: `OAUTH_TPS`. Default: `5`.
     #[serde(default)]
-    pub refresh_concurrency: usize,
+    pub oauth_tps: usize,
 
-    /// List of Gemini model names treated as "big" models.
-    /// Env: `BIGMODEL_LIST`. Default: empty.
+    /// List of supported model names. Each name corresponds to a distinct credential queue.
+    /// Env: `MODEL_LIST`. Example: `["gemini-pro", "gemini-1.5-flash"]`.
     #[serde(default)]
-    pub bigmodel_list: Vec<String>,
+    pub model_list: Vec<String>,
 
     /// Optional directory containing credential files to preload at startup.
     /// Env: `CRED_PATH`. Example: `./credentials`. Default: unset (skip preload).
@@ -67,6 +69,11 @@ pub struct Config {
     /// Env: `ENABLE_MULTIPLEXING`. Default: `false`.
     #[serde(default)]
     pub enable_multiplexing: bool,
+
+    /// Max retry attempts for Gemini CLI upstream calls.
+    /// Env: `GEMINI_RETRY_MAX_TIMES`. Default: `3`.
+    #[serde(default = "default_gemini_retry_max_times")]
+    pub gemini_retry_max_times: usize,
 }
 
 impl Default for Config {
@@ -78,10 +85,11 @@ impl Default for Config {
             loglevel: "info".to_string(),
             proxy: None,
             nexus_key: "pwd".to_string(),
-            refresh_concurrency: 10,
-            bigmodel_list: Vec::new(),
+            oauth_tps: 5,
+            model_list: vec!["gemini-2.5-pro".to_string()],
             cred_path: None,
             enable_multiplexing: false,
+            gemini_retry_max_times: default_gemini_retry_max_times(),
         }
     }
 }
@@ -124,6 +132,15 @@ where
 
 /// Global, lazily-initialized configuration instance.
 pub static CONFIG: LazyLock<Config> = LazyLock::new(Config::from_env);
+
+/// Default retry policy for Google OAuth operations.
+pub static OAUTH_RETRY_POLICY: LazyLock<ExponentialBuilder> = LazyLock::new(|| {
+    ExponentialBuilder::default()
+        .with_min_delay(Duration::from_secs(1))
+        .with_max_delay(Duration::from_secs(3))
+        .with_max_times(3)
+        .with_jitter()
+});
 
 /// Google OAuth endpoints (constants).
 pub static GOOGLE_AUTH_URL: LazyLock<Url> = LazyLock::new(|| {
@@ -188,4 +205,8 @@ pub fn default_listen_ip() -> IpAddr {
 /// Default port for the HTTP server.
 pub fn default_listen_port() -> u16 {
     8188
+}
+
+pub fn default_gemini_retry_max_times() -> usize {
+    3
 }

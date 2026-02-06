@@ -1,13 +1,21 @@
 //! Database module: models and schema for persistent storage.
 //!
 //! Layout:
-//! - `models.rs`: Rust structs mirroring DB rows and conversions
+//! - `models.rs`: Rust structs mirroring DB rows
 //! - `schema.rs`: SQL DDL for initializing the database (SQLite-first)
 
+pub mod actor;
 pub mod models;
+pub mod patch;
 pub mod schema;
-pub mod sqlite;
+pub mod traits;
 
-pub use models::DbCredential;
+mod patch_impl;
+
+pub use models::{DbCodexResource, DbGeminiCliResource};
+pub use patch::{
+    CodexCreate, CodexPatch, GeminiCliCreate, GeminiCliPatch, ProviderCreate, ProviderPatch,
+};
 pub use schema::SQLITE_INIT;
-pub use sqlite::{CredentialsStorage, SqlitePool};
+
+pub use actor::{DbActorHandle, spawn};

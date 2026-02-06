@@ -1,37 +1,12 @@
 services:
-  gcli-nexus:
-    image: ghcr.io/Yoo1tic/gcli-nexus:latest
-    container_name: gcli-nexus
+  pollux:
+    image: ghcr.io/Yoo1tic/pollux:latest
+    container_name: pollux
     ports:
       - "8188:8188"
-    environment:
-      # Required configuration
-      NEXUS_KEY: pwd
-
-      # HTTP server listen address and port.
-      LISTEN_ADDR: 0.0.0.0
-      LISTEN_PORT: 8188
-
-      # Optional configuration
-      LOGLEVEL: info
-
-      DATABASE_URL: sqlite:///app/data/data.db
-
-      CRED_PATH: /app/credentials
-
-      # JSON array of Gemini models.
-      MODEL_LIST="[gemini-2.5-flash, gemini-2.5-pro, gemini-3-pro-preview]"
-
-      # OAuth refresh requests per second (TPS) for the refresh worker.
-      OAUTH_TPS: 5
-
-      # Max retry attempts for Gemini CLI upstream calls.
-      GEMINI_RETRY_MAX_TIMES: 3
-
-      # Optional outbound HTTP proxy (scheme://user:pass@host:port). Remove if unused.
-      # PROXY="http://username:password@proxy.company.com:8080"
-
     volumes:
+      # Runtime config
+      - ./config.toml:/app/config.toml:ro
       # Persist SQLite database
       - ./data:/app/data
       # Optional: mount credentials directory

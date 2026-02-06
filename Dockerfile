@@ -18,10 +18,10 @@ ARG GCLI_CLIENT_SECRET
 ARG SQLX_OFFLINE
 
 RUN cargo build --release && \
-    strip target/release/gcli-nexus && \
-    mv target/release/gcli-nexus /tmp/gcli-nexus
+    strip target/release/pollux && \
+    mv target/release/pollux /tmp/pollux
 
 FROM gcr.io/distroless/static-debian12
-COPY --from=builder /tmp/gcli-nexus /app/gcli-nexus
+COPY --from=builder /tmp/pollux /app/pollux
 WORKDIR /app
-ENTRYPOINT ["/app/gcli-nexus"]
+ENTRYPOINT ["/app/pollux"]

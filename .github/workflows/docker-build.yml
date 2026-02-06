@@ -19,9 +19,10 @@ jobs:
           - runner: ubuntu-latest
             arch: amd64
             platform: linux/amd64
-          - runner: ubuntu-24.04-arm
-            arch: arm64
-            platform: linux/arm64
+          # NOTE: Disabled for private repos; ubuntu-24.04-arm is not supported yet.
+          # - runner: ubuntu-24.04-arm
+          #   arch: arm64
+          #   platform: linux/arm64
 
     permissions:
       contents: read
@@ -62,8 +63,6 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
           build-args: |
-            GCLI_CLIENT_ID=${{ secrets.GCLI_CLIENT_ID }}
-            GCLI_CLIENT_SECRET=${{ secrets.GCLI_CLIENT_SECRET }}
             SQLX_OFFLINE=true
 
       - name: Export digest

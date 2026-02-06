@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n                    UPDATE gemini_cli\n                    SET\n                        email = COALESCE(?, email),\n                        refresh_token = COALESCE(?, refresh_token),\n                        access_token = COALESCE(?, access_token),\n                        expiry = COALESCE(?, expiry),\n                        status = COALESCE(?, status),\n                        updated_at = ?\n                    WHERE id = ?\n                    ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": []
+  },
+  "hash": "a12084eaf9e095dfde901a71226387d66f56ee940bdc94e118b92e94f2286488"
+}

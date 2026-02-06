@@ -25,7 +25,6 @@ target
 
 /target
 
-/tests
 *.md
 *.db*
 .env
@@ -36,4 +35,5 @@ credentials
 *.json
 !/.sqlx/
 !/.sqlx/*.json
+!release.sh
 !RELEASE_NOTES.md

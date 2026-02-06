@@ -1,14 +1,12 @@
-pub mod api;
 pub mod config;
 pub mod db;
 pub mod error;
-pub mod google_oauth;
-pub mod handlers;
-pub mod middleware;
-pub mod router;
-pub mod service;
-pub mod types;
+pub mod model_catalog;
+pub(crate) mod oauth_utils;
+mod patches;
+pub mod providers;
+pub mod server;
+pub(crate) mod utils;
 
-pub use error::NexusError;
-pub use google_oauth::credentials::GoogleCredential;
-pub use google_oauth::ops::GoogleOauthOps;
+pub use error::PolluxError;
+pub use providers::geminicli::client::oauth::ops::GoogleOauthOps;

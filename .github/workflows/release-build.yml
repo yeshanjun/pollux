@@ -7,8 +7,6 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  GCLI_CLIENT_ID: ${{ secrets.GCLI_CLIENT_ID }}
-  GCLI_CLIENT_SECRET: ${{ secrets.GCLI_CLIENT_SECRET }}
   SQLX_OFFLINE: true
 
 permissions:
@@ -24,13 +22,14 @@ jobs:
           - target: x86_64
             target_triple: x86_64-unknown-linux-gnu
             runner: ubuntu-latest
-            artifact_name: gcli-nexus
-            release_name: gcli-nexus-linux-x86_64
-          - target: aarch64
-            target_triple: aarch64-unknown-linux-gnu
-            runner: ubuntu-24.04-arm
-            artifact_name: gcli-nexus
-            release_name: gcli-nexus-linux-aarch64
+            artifact_name: pollux
+            release_name: pollux-linux-x86_64
+          # NOTE: Disabled for private repos; ubuntu-24.04-arm is not supported yet.
+          # - target: aarch64
+          #   target_triple: aarch64-unknown-linux-gnu
+          #   runner: ubuntu-24.04-arm
+          #   artifact_name: pollux
+          #   release_name: pollux-linux-aarch64
     steps:
       - uses: actions/checkout@v4
 
@@ -68,8 +67,8 @@ jobs:
         include:
           - target: x86_64
             target_triple: x86_64-pc-windows-msvc
-            artifact_name: gcli-nexus.exe
-            release_name: gcli-nexus-windows-x86_64
+            artifact_name: pollux.exe
+            release_name: pollux-windows-x86_64
     steps:
       - uses: actions/checkout@v4
 
@@ -99,12 +98,12 @@ jobs:
         include:
           - target: x86_64
             target_triple: x86_64-apple-darwin
-            artifact_name: gcli-nexus
-            release_name: gcli-nexus-macos-x86_64
+            artifact_name: pollux
+            release_name: pollux-macos-x86_64
           - target: aarch64
             target_triple: aarch64-apple-darwin
-            artifact_name: gcli-nexus
-            release_name: gcli-nexus-macos-aarch64
+            artifact_name: pollux
+            release_name: pollux-macos-aarch64
     steps:
       - uses: actions/checkout@v4
 

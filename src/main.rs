@@ -1,7 +1,8 @@
 use mimalloc::MiMalloc;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use tokio::{net::TcpListener, signal};
-use tracing::{info, warn};
+use tracing::info;
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
 #[global_allocator]
@@ -9,61 +10,31 @@ static GLOBAL: MiMalloc = MiMalloc;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    dotenvy::dotenv().ok();
+    // The server binary requires a real config file with a non-empty pollux_key.
+    // (Library code uses `config::CONFIG` which is best-effort and does not validate.)
+    let cfg = pollux::config::Config::from_toml();
 
-    let cfg = &gcli_nexus::config::CONFIG;
-
-    let env_filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(cfg.loglevel.clone()));
+    let env_filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new(cfg.basic.loglevel.clone()));
 
     tracing_subscriber::registry()
         .with(env_filter)
         .with(
             tracing_subscriber::fmt::layer()
-                .compact()
+                // .compact()
                 .with_level(true)
                 .with_target(false),
         )
         .init();
 
-    info!(
-        database_url = %cfg.database_url,
-        proxy = %cfg.proxy.as_ref().map(|u| u.as_str()).unwrap_or("<none>"),
-        loglevel = %cfg.loglevel,
-        nexus_key = %cfg.nexus_key,
-        listen_addr = %cfg.listen_addr,
-        listen_port = cfg.listen_port
-    );
-
-    let handle = gcli_nexus::service::credentials_actor::spawn().await;
-    let handle_clone = handle.clone();
-    if let Some(cred_path) = cfg.cred_path.as_ref() {
-        tokio::spawn(async move {
-            match gcli_nexus::service::credential_loader::load_from_dir(cred_path) {
-                Ok(files) if !files.is_empty() => {
-                    handle_clone.submit_credentials(files).await;
-                }
-                Ok(_) => {
-                    info!(
-                        path = %cred_path.display(),
-                        "Background task: no credential files discovered in directory."
-                    );
-                }
-                Err(e) => {
-                    warn!(
-                        path = %cred_path.display(),
-                        error = %e,
-                        "Background task: failed to load credentials from directory."
-                    );
-                }
-            }
-        });
-    }
+    let db = pollux::db::spawn(cfg.basic.database_url.as_str()).await;
+    let providers = pollux::providers::Providers::spawn(db.clone(), &cfg).await;
     // Build axum router and serve
-    let state = gcli_nexus::router::NexusState::new(handle.clone());
-    let app = gcli_nexus::router::nexus_router(state);
+    let pollux_key: Arc<str> = Arc::from(cfg.basic.pollux_key.clone());
+    let state = pollux::server::router::PolluxState::new(providers, pollux_key);
+    let app = pollux::server::router::pollux_router(state);
 
-    let addr = SocketAddr::from((cfg.listen_addr, cfg.listen_port));
+    let addr = SocketAddr::from((cfg.basic.listen_addr, cfg.basic.listen_port));
     let listener = TcpListener::bind(addr).await?;
     info!("HTTP server listening on {}", addr);
     axum::serve(listener, app)

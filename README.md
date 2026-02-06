@@ -1,3 +1,11 @@
+## Project Rename Notice
+
+This repository has been renamed from **gcli-nexus** to **pollux**.  
+It is the same repository, and all history/tags are preserved.
+
+**v0.3.1** is the final legacy (farewell) release.  
+Ongoing development continues here under the new name, starting from **v0.4.0** as a continuation and refactor.
+
 # Gcli-Nexus
 
 [![GitHub Release](https://img.shields.io/github/v/release/Yoo1tic/gcli-nexus?style=flat&logo=github&color=blue)](https://github.com/Yoo1tic/gcli-nexus/releases/latest)

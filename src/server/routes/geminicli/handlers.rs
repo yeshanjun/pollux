@@ -17,16 +17,22 @@ pub async fn gemini_cli_handler(
     GeminiPreprocess(body, ctx): GeminiPreprocess,
 ) -> Result<Response, GeminiCliError> {
     // Construct caller
-    let caller = GeminiClient::new(state.providers.geminicli_cfg.as_ref(), state.client.clone());
+    let caller = GeminiClient::new(
+        state.providers.geminicli_cfg.as_ref(),
+        state.client.clone(),
+        None,
+    );
 
     let upstream_resp = caller
         .call_gemini_cli(&state.providers.geminicli, &ctx, &body)
         .await?;
 
     if ctx.stream {
-        Ok(build_stream_response(upstream_resp).into_response())
+        Ok(build_stream_response(upstream_resp, state.clone()).into_response())
     } else {
-        Ok(build_json_response(upstream_resp).await.into_response())
+        Ok(build_json_response(upstream_resp, &state)
+            .await
+            .into_response())
     }
 }
 

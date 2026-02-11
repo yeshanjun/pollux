@@ -1,22 +1,24 @@
 use crate::providers::geminicli::{GeminiContext, model_mask};
+use crate::server::router::PolluxState;
+use crate::utils::logging::with_pretty_json_debug;
 use crate::{error::GeminiCliError, error::GeminiErrorObject};
 use axum::{
     Json, RequestExt,
     extract::{FromRequest, Path, Request},
     http::StatusCode,
 };
-use pollux_schema::gemini::GeminiRequestBody;
-use tracing::warn;
+use pollux_schema::gemini::GeminiGenerateContentRequest;
+use tracing::{debug, warn};
 
-pub struct GeminiPreprocess(pub GeminiRequestBody, pub GeminiContext);
+pub struct GeminiPreprocess(pub GeminiGenerateContentRequest, pub GeminiContext);
 
 impl<S> FromRequest<S> for GeminiPreprocess
 where
-    S: Send + Sync,
+    S: Send + Sync + std::borrow::Borrow<PolluxState>,
 {
     type Rejection = GeminiCliError;
 
-    async fn from_request(mut req: Request, _state: &S) -> Result<Self, Self::Rejection> {
+    async fn from_request(mut req: Request, state: &S) -> Result<Self, Self::Rejection> {
         let Path(path) = req
             .extract_parts::<Path<String>>()
             .await
@@ -65,7 +67,24 @@ where
 
         let stream = path.contains("streamGenerateContent");
 
-        let Json(body) = Json::<GeminiRequestBody>::from_request(req, &()).await?;
+        let Json(mut body) = Json::<GeminiGenerateContentRequest>::from_request(req, &()).await?;
+
+        let state = state.borrow();
+        state
+            .providers
+            .geminicli_thoughtsig
+            .patch_request(&mut body);
+
+        with_pretty_json_debug(&body, |pretty_body| {
+            debug!(
+                channel = "geminicli",
+                req.model = %model,
+                req.stream = stream,
+                req.path = %path,
+                body = %pretty_body,
+                "[GeminiCLI] Extracted normalized request body"
+            );
+        });
 
         let ctx = GeminiContext {
             model,

@@ -16,7 +16,7 @@ pub trait Sniffable {
     fn is_finished(&self) -> bool;
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default)]
 pub struct SessionState {
     thought_buffer: String,
     function_buffer: Option<Value>,
@@ -33,7 +33,6 @@ impl SessionState {
     }
 }
 
-#[derive(Clone)]
 pub struct SignatureSniffer {
     engine: Arc<ThoughtSignatureEngine>,
     state: SessionState,

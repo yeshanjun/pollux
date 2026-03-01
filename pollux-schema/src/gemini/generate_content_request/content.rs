@@ -40,7 +40,11 @@ pub struct Part {
     pub part_metadata: Option<Value>,
 
     /// Inline text data.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_nonempty_string"
+    )]
     pub text: Option<String>,
 
     /// Inline media bytes.
@@ -85,29 +89,40 @@ impl Part {
     }
 }
 
+fn deserialize_nonempty_string<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<String>::deserialize(deserializer)?.filter(|s| !s.is_empty()))
+}
+
 fn deserialize_parts<'de, D>(deserializer: D) -> Result<Vec<Part>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    let parts = Vec::<Part>::deserialize(deserializer)?;
+    Vec::<Part>::deserialize(deserializer)?
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, part)| {
+            let data_fields_count = usize::from(part.text.is_some())
+                + usize::from(part.inline_data.is_some())
+                + usize::from(part.function_call.is_some())
+                + usize::from(part.function_response.is_some())
+                + usize::from(part.file_data.is_some())
+                + usize::from(part.executable_code.is_some())
+                + usize::from(part.code_execution_result.is_some());
 
-    for (index, part) in parts.iter().enumerate() {
-        let data_fields_count = usize::from(part.text.is_some())
-            + usize::from(part.inline_data.is_some())
-            + usize::from(part.function_call.is_some())
-            + usize::from(part.function_response.is_some())
-            + usize::from(part.file_data.is_some())
-            + usize::from(part.executable_code.is_some())
-            + usize::from(part.code_execution_result.is_some());
-
-        if data_fields_count > 1 {
-            return Err(D::Error::custom(format!(
-                "parts[{index}] must contain at most one data field among text, inlineData, functionCall, functionResponse, fileData, executableCode, codeExecutionResult"
-            )));
-        }
-    }
-
-    Ok(parts)
+            if data_fields_count > 1 {
+                Some(Err(D::Error::custom(format!(
+                    "parts[{index}] must contain at most one data field among text, inlineData, functionCall, functionResponse, fileData, executableCode, codeExecutionResult"
+                ))))
+            } else if data_fields_count > 0 {
+                Some(Ok(part))
+            } else {
+                None
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -220,5 +235,26 @@ mod tests {
 
         let output = serde_json::to_value(&content).unwrap();
         assert_eq!(output, input);
+    }
+
+    #[test]
+    fn empty_text_normalized_to_none() {
+        let part: Part = serde_json::from_value(json!({"text": ""})).unwrap();
+        assert!(part.text.is_none());
+    }
+
+    #[test]
+    fn empty_text_part_dropped_from_parts() {
+        let content: Content = serde_json::from_value(json!({
+            "role": "model",
+            "parts": [
+                {"text": ""},
+                {"text": "actual response"}
+            ]
+        }))
+        .unwrap();
+
+        assert_eq!(content.parts.len(), 1);
+        assert_eq!(content.parts[0].text.as_deref(), Some("actual response"));
     }
 }

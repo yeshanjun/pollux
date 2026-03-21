@@ -18,6 +18,7 @@ use tracing::error;
 const SSE_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Build SSE stream response.
+#[allow(clippy::result_large_err)]
 pub(super) fn build_stream_response(upstream_resp: reqwest::Response) -> impl IntoResponse {
     let raw_stream = upstream_resp.bytes_stream().eventsource();
     let timed_stream =

@@ -7,8 +7,8 @@ pub mod respond;
 use crate::server::router::PolluxState;
 use axum::{
     Router,
-    routing::{get, post},
     extract::DefaultBodyLimit,
+    routing::{get, post},
 };
 
 use handlers::{antigravity_models_handler, antigravity_proxy_handler};

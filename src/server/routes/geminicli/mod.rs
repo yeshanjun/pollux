@@ -13,8 +13,8 @@ use resource::geminicli_resource_add;
 const GEMINI_RESPONSE_BODY_LIMIT_BYTES: usize = 100 * 1024 * 1024;
 use axum::{
     Router,
-    routing::{get, post},
     extract::DefaultBodyLimit,
+    routing::{get, post},
 };
 use std::sync::LazyLock;
 

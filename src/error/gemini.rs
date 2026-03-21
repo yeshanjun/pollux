@@ -479,7 +479,7 @@ mod tests {
         assert!(e429_2.inner.details.is_some());
         assert_eq!(
             e429_2.try_match_rule(StatusCode::TOO_MANY_REQUESTS),
-            Some(ActionForError::RateLimit(Duration::from_secs(60 * 60)))
+            Some(ActionForError::RateLimit(Duration::from_secs(10 * 60)))
         );
 
         let e404_1 = GeminiCliErrorBody {

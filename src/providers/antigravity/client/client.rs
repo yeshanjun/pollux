@@ -129,6 +129,7 @@ impl AntigravityClient {
                     .into_request(gemini_request.clone());
 
                     Self::apply_claude_thinking_defaults(model.as_str(), &mut payload.request);
+                    Self::backfill_function_call_ids(model.as_str(), &mut payload.request);
 
                     payload.prepend_system_instruction(crate::config::CLAUDE_SYSTEM_PREAMBLE);
 
@@ -270,6 +271,60 @@ impl AntigravityClient {
             }));
         }
     }
+
+    /// Backfill missing `id` on `functionCall` / `functionResponse` parts.
+    ///
+    /// Claude requires every `tool_use` block to carry a unique `id` and
+    /// every `tool_result` to carry a matching `tool_use_id`.  The
+    /// Antigravity upstream translates Gemini `functionCall` → Claude
+    /// `tool_use` and `functionResponse` → `tool_result`, but clients
+    /// omit these fields because they are not part of the standard Gemini
+    /// API spec.  Generate / pair them so the upstream translation
+    /// succeeds.
+    fn backfill_function_call_ids(model: &str, request: &mut GeminiGenerateContentRequest) {
+        if !model.starts_with("claude") {
+            return;
+        }
+
+        let mut pending_call_ids: Vec<String> = Vec::new();
+
+        for content in &mut request.contents {
+            match content.role.as_deref() {
+                Some("model") => {
+                    pending_call_ids.clear();
+                    for part in &mut content.parts {
+                        let Some(obj) = part.function_call.as_mut().and_then(|v| v.as_object_mut())
+                        else {
+                            continue;
+                        };
+                        let id_val = obj.entry("id").or_insert_with(|| {
+                            Value::String(format!("toolu_{}", Uuid::new_v4().simple()))
+                        });
+                        if let Some(id_str) = id_val.as_str() {
+                            pending_call_ids.push(id_str.to_string());
+                        }
+                    }
+                }
+                Some("user") => {
+                    let mut id_iter = pending_call_ids.drain(..);
+                    for part in &mut content.parts {
+                        let Some(obj) = part
+                            .function_response
+                            .as_mut()
+                            .and_then(|v| v.as_object_mut())
+                        else {
+                            continue;
+                        };
+                        let Some(matching_id) = id_iter.next() else {
+                            break;
+                        };
+                        obj.entry("id").or_insert(Value::String(matching_id));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -371,5 +426,229 @@ mod tests {
         AntigravityClient::apply_claude_thinking_defaults(model, &mut request);
 
         assert!(request.generation_config.is_none());
+    }
+
+    #[test]
+    fn backfill_injects_id_into_function_call_without_one() {
+        let mut request: GeminiGenerateContentRequest = serde_json::from_value(json!({
+            "contents": [
+                {
+                    "role": "model",
+                    "parts": [{
+                        "functionCall": {
+                            "name": "get_weather",
+                            "args": {"city": "Berlin"}
+                        }
+                    }]
+                }
+            ]
+        }))
+        .expect("request must parse");
+
+        AntigravityClient::backfill_function_call_ids("claude-opus-4-6-thinking", &mut request);
+
+        let fc = request.contents[0].parts[0].function_call.as_ref().unwrap();
+        let id = fc.get("id").expect("id must be injected");
+        assert!(id.as_str().unwrap().starts_with("toolu_"));
+    }
+
+    #[test]
+    fn backfill_preserves_existing_id() {
+        let mut request: GeminiGenerateContentRequest = serde_json::from_value(json!({
+            "contents": [
+                {
+                    "role": "model",
+                    "parts": [{
+                        "functionCall": {
+                            "name": "get_weather",
+                            "args": {"city": "Berlin"},
+                            "id": "toolu_original_id"
+                        }
+                    }]
+                }
+            ]
+        }))
+        .expect("request must parse");
+
+        AntigravityClient::backfill_function_call_ids("claude-opus-4-6-thinking", &mut request);
+
+        let fc = request.contents[0].parts[0].function_call.as_ref().unwrap();
+        assert_eq!(fc.get("id").unwrap().as_str().unwrap(), "toolu_original_id");
+    }
+
+    #[test]
+    fn backfill_skips_non_claude_models() {
+        let mut request: GeminiGenerateContentRequest = serde_json::from_value(json!({
+            "contents": [
+                {
+                    "role": "model",
+                    "parts": [{
+                        "functionCall": {
+                            "name": "get_weather",
+                            "args": {"city": "Berlin"}
+                        }
+                    }]
+                }
+            ]
+        }))
+        .expect("request must parse");
+
+        AntigravityClient::backfill_function_call_ids("gemini-2.5-pro", &mut request);
+
+        let fc = request.contents[0].parts[0].function_call.as_ref().unwrap();
+        assert!(fc.get("id").is_none());
+    }
+
+    #[test]
+    fn backfill_skips_user_content_without_preceding_model() {
+        let mut request: GeminiGenerateContentRequest = serde_json::from_value(json!({
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [{
+                        "functionResponse": {
+                            "name": "get_weather",
+                            "response": {"temp": 15}
+                        }
+                    }]
+                }
+            ]
+        }))
+        .expect("request must parse");
+
+        AntigravityClient::backfill_function_call_ids("claude-opus-4-6-thinking", &mut request);
+
+        let fr = request.contents[0].parts[0]
+            .function_response
+            .as_ref()
+            .unwrap();
+        // No preceding model functionCall, so no id injected
+        assert!(fr.get("id").is_none());
+    }
+
+    #[test]
+    fn backfill_pairs_function_response_with_function_call_id() {
+        let mut request: GeminiGenerateContentRequest = serde_json::from_value(json!({
+            "contents": [
+                {
+                    "role": "model",
+                    "parts": [
+                        {
+                            "functionCall": {
+                                "name": "search_web",
+                                "args": {"query": "hello"}
+                            }
+                        },
+                        {
+                            "functionCall": {
+                                "name": "search_web",
+                                "args": {"query": "world"}
+                            }
+                        }
+                    ]
+                },
+                {
+                    "role": "user",
+                    "parts": [
+                        {
+                            "functionResponse": {
+                                "name": "search_web",
+                                "response": {"result": "r1"}
+                            }
+                        },
+                        {
+                            "functionResponse": {
+                                "name": "search_web",
+                                "response": {"result": "r2"}
+                            }
+                        }
+                    ]
+                }
+            ]
+        }))
+        .expect("request must parse");
+
+        AntigravityClient::backfill_function_call_ids("claude-opus-4-6-thinking", &mut request);
+
+        // functionCall parts should have ids
+        let fc0_id = request.contents[0].parts[0]
+            .function_call
+            .as_ref()
+            .unwrap()
+            .get("id")
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_string();
+        let fc1_id = request.contents[0].parts[1]
+            .function_call
+            .as_ref()
+            .unwrap()
+            .get("id")
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        // functionResponse parts should have matching ids
+        let fr0_id = request.contents[1].parts[0]
+            .function_response
+            .as_ref()
+            .unwrap()
+            .get("id")
+            .unwrap()
+            .as_str()
+            .unwrap();
+        let fr1_id = request.contents[1].parts[1]
+            .function_response
+            .as_ref()
+            .unwrap()
+            .get("id")
+            .unwrap()
+            .as_str()
+            .unwrap();
+
+        assert_eq!(fr0_id, fc0_id);
+        assert_eq!(fr1_id, fc1_id);
+    }
+
+    #[test]
+    fn backfill_preserves_existing_function_response_id() {
+        let mut request: GeminiGenerateContentRequest = serde_json::from_value(json!({
+            "contents": [
+                {
+                    "role": "model",
+                    "parts": [{
+                        "functionCall": {
+                            "name": "get_weather",
+                            "args": {"city": "Berlin"},
+                            "id": "toolu_call_001"
+                        }
+                    }]
+                },
+                {
+                    "role": "user",
+                    "parts": [{
+                        "functionResponse": {
+                            "name": "get_weather",
+                            "response": {"temp": 15},
+                            "id": "toolu_existing_response_id"
+                        }
+                    }]
+                }
+            ]
+        }))
+        .expect("request must parse");
+
+        AntigravityClient::backfill_function_call_ids("claude-opus-4-6-thinking", &mut request);
+
+        let fr = request.contents[1].parts[0]
+            .function_response
+            .as_ref()
+            .unwrap();
+        assert_eq!(
+            fr.get("id").unwrap().as_str().unwrap(),
+            "toolu_existing_response_id"
+        );
     }
 }

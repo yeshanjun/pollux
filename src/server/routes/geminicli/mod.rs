@@ -10,9 +10,11 @@ use handlers::{gemini_cli_handler, gemini_models_handler, gemini_openai_models_h
 use pollux_schema::{gemini::GeminiModelList, openai::OpenaiModelList};
 use resource::geminicli_resource_add;
 
+const GEMINI_RESPONSE_BODY_LIMIT_BYTES: usize = 100 * 1024 * 1024;
 use axum::{
     Router,
     routing::{get, post},
+    extract::DefaultBodyLimit,
 };
 use std::sync::LazyLock;
 
@@ -34,5 +36,6 @@ pub fn router() -> Router<PolluxState> {
             get(gemini_openai_models_handler),
         )
         .route("/geminicli/v1beta/models/{*path}", post(gemini_cli_handler))
+        .layer(DefaultBodyLimit::max(GEMINI_RESPONSE_BODY_LIMIT_BYTES))
         .route("/geminicli/resource:add", post(geminicli_resource_add))
 }

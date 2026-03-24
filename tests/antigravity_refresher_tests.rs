@@ -57,6 +57,7 @@ fn make_cfg(token_url: Url, api_url: Url) -> AntigravityResolvedConfig {
         oauth_client_id: "client-id".to_string(),
         oauth_client_secret: "client-secret".to_string(),
         oauth_scopes: vec!["openid".to_string()],
+        claude_system_preamble: "test preamble".to_string(),
     }
 }
 

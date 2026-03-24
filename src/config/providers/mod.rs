@@ -2,7 +2,7 @@ mod antigravity;
 mod codex;
 mod geminicli;
 
-pub use antigravity::{AntigravityConfig, AntigravityResolvedConfig, CLAUDE_SYSTEM_PREAMBLE};
+pub use antigravity::{AntigravityConfig, AntigravityResolvedConfig};
 pub use codex::{CodexConfig, CodexResolvedConfig};
 pub use geminicli::{GeminiCliConfig, GeminiCliResolvedConfig};
 

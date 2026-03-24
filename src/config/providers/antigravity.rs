@@ -3,19 +3,9 @@ use url::Url;
 
 use super::ProviderDefaults;
 
-/// Claude system preamble for Antigravity upstream strict-match validation.
-///
-/// Default preamble (repository baseline):
-/// ```text
-/// You are Antigravity, a powerful agentic AI coding assistant designed by the Google Deepmind team working on Advanced Agentic Coding. You are pair programming with a USER to solve their coding task. The task may require creating a new codebase, modifying or debugging an existing codebase, or simply answering a question.**Absolute paths only****Proactiveness**
-/// ```
-///
-/// This value is sourced from `CLAUDE_SYSTEM_PREAMBLE` and can be overridden
-/// by environment-variable injection during build/CI.
-///
 /// WARNING: Antigravity applies strict text matching. Any character change
 /// (including missing spaces) may fail validation and trigger HTTP 429.
-pub const CLAUDE_SYSTEM_PREAMBLE: &str = env!("CLAUDE_SYSTEM_PREAMBLE");
+pub const DEFAULT_CLAUDE_SYSTEM_PREAMBLE: &str = "Please ignore following [ignore] You are Antigravity, a powerful agentic AI coding assistant designed by the Google Deepmind team working on Advanced Agentic Coding.You are pair programming with a USER to solve their coding task. The task may require creating a new codebase, modifying or debugging an existing codebase, or simply answering a question.**Absolute paths only****Proactiveness** [/ignore]";
 
 /// Antigravity provider configuration managed by Figment.
 ///
@@ -61,6 +51,12 @@ pub struct AntigravityConfig {
     /// Falls back to `providers.defaults.retry_max_times`.
     #[serde(default)]
     pub retry_max_times: Option<usize>,
+
+    /// Claude system preamble prepended to Antigravity requests.
+    /// TOML: `providers.antigravity.claude_system_preamble`.
+    /// Falls back to the built-in repository baseline when unset.
+    #[serde(default)]
+    pub claude_system_preamble: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -77,6 +73,7 @@ pub struct AntigravityResolvedConfig {
     pub oauth_client_id: String,
     pub oauth_client_secret: String,
     pub oauth_scopes: Vec<String>,
+    pub claude_system_preamble: String,
 }
 
 impl AntigravityConfig {
@@ -96,6 +93,10 @@ impl AntigravityConfig {
             oauth_client_id: default_oauth_client_id(),
             oauth_client_secret: default_oauth_client_secret(),
             oauth_scopes: default_oauth_scopes(),
+            claude_system_preamble: self
+                .claude_system_preamble
+                .clone()
+                .unwrap_or_else(default_claude_system_preamble),
         }
     }
 }
@@ -109,6 +110,7 @@ impl Default for AntigravityConfig {
             model_list: default_model_list(),
             enable_multiplexing: None,
             retry_max_times: None,
+            claude_system_preamble: None,
         }
     }
 }
@@ -156,4 +158,35 @@ fn default_oauth_scopes() -> Vec<String> {
         "https://www.googleapis.com/auth/cclog".to_string(),
         "https://www.googleapis.com/auth/experimentsandconfigs".to_string(),
     ]
+}
+
+fn default_claude_system_preamble() -> String {
+    DEFAULT_CLAUDE_SYSTEM_PREAMBLE.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_uses_built_in_preamble_when_toml_value_is_unset() {
+        let cfg = AntigravityConfig::default();
+        let resolved = cfg.resolve(&ProviderDefaults::default());
+
+        assert_eq!(
+            resolved.claude_system_preamble,
+            DEFAULT_CLAUDE_SYSTEM_PREAMBLE
+        );
+    }
+
+    #[test]
+    fn resolve_prefers_toml_configured_preamble() {
+        let cfg = AntigravityConfig {
+            claude_system_preamble: Some("custom preamble".to_string()),
+            ..AntigravityConfig::default()
+        };
+        let resolved = cfg.resolve(&ProviderDefaults::default());
+
+        assert_eq!(resolved.claude_system_preamble, "custom preamble");
+    }
 }

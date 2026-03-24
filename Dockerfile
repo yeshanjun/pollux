@@ -13,7 +13,6 @@ RUN cargo chef cook --release --recipe-path recipe.json
 
 COPY . .
 
-ARG CLAUDE_SYSTEM_PREAMBLE
 ARG SQLX_OFFLINE
 
 RUN cargo build --release && \

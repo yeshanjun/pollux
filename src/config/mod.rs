@@ -3,9 +3,8 @@ mod providers;
 
 pub use basic::BasicConfig;
 pub use providers::{
-    AntigravityConfig, AntigravityResolvedConfig, CLAUDE_SYSTEM_PREAMBLE, CodexConfig,
-    CodexResolvedConfig, GeminiCliConfig, GeminiCliResolvedConfig, ProviderDefaults,
-    ProvidersConfig,
+    AntigravityConfig, AntigravityResolvedConfig, CodexConfig, CodexResolvedConfig,
+    GeminiCliConfig, GeminiCliResolvedConfig, ProviderDefaults, ProvidersConfig,
 };
 
 use figment::{

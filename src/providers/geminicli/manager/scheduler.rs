@@ -218,7 +218,9 @@ impl CredentialManager {
                     if ticket_deadline >= *entry.get() =>
                 {
                     let ((reclaimed_cred_id, reclaimed_model_index), _) = entry.remove_entry();
-                    if let Some(target_queue) = self.queues.get_mut(reclaimed_model_index) {
+                    if let Some(target_queue) = self.queues.get_mut(reclaimed_model_index)
+                        && !target_queue.contains(&reclaimed_cred_id)
+                    {
                         target_queue.push_back(reclaimed_cred_id);
                     }
                 }

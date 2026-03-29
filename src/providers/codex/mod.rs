@@ -10,7 +10,10 @@ mod workers;
 
 use std::sync::LazyLock;
 use url::Url;
-use workers::{CodexRefresherHandle, RefreshOutcome};
+use workers::{
+    CodexOauthWorkerHandle, CredentialJob, CredentialJobKind, CredentialProcessError,
+    CredentialProcessResult,
+};
 
 pub use manager::CodexActorHandle;
 pub(in crate::providers) use manager::spawn;
@@ -27,4 +30,4 @@ pub(crate) static CODEX_RESPONSES_URL: LazyLock<Url> = LazyLock::new(|| {
 /// This is intentionally fixed (no runtime detection) to keep behavior predictable.
 /// codex_cli_rs/0.95.0 (Debian 12.0.0; x86_64) vscode/1.108.2
 pub(crate) const CODEX_USER_AGENT: &str =
-    "codex_cli_rs/0.95.0 (Debian 12.0.0; x86_64) vscode/1.108.2";
+    "codex_cli_rs/0.117.0 (Debian 12.0.0; x86_64) vscode/1.113.0 (codex-tui; 0.117.0)";

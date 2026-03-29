@@ -1,3 +1,6 @@
-mod refresher;
+mod processor;
 
-pub(super) use refresher::{CodexRefresherHandle, RefreshOutcome};
+pub(super) use processor::{
+    CodexOauthWorkerHandle, CredentialJob, CredentialJobKind, CredentialProcessError,
+    CredentialProcessResult,
+};

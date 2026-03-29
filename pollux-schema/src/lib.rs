@@ -2,6 +2,7 @@ pub mod antigravity;
 pub mod codex;
 pub mod gemini;
 pub mod geminicli;
+mod macros;
 pub mod openai;
 
 pub use antigravity::{AntigravityRequestBody, AntigravityRequestMeta};

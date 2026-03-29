@@ -1,8 +1,38 @@
 //! OpenAI Responses API request schema.
 
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::collections::BTreeMap;
+
+crate::impl_untagged_opt!(
+    deserialize_openai_input,
+    OpenaiInput,
+    OpenaiInput::Null,
+    OpenaiInput::Items,
+    |s: String| {
+        OpenaiInput::Items(vec![OpenaiInputItem {
+            role: Some("user".to_string()),
+            content: Some(OpenaiInputContent::Parts(vec![serde_json::json!({
+                "type": "input_text",
+                "text": s
+            })])),
+            extra: std::collections::BTreeMap::new(),
+        }])
+    }
+);
+
+crate::impl_untagged_opt!(
+    deserialize_openai_message_content,
+    OpenaiInputContent,
+    OpenaiInputContent::Null,
+    OpenaiInputContent::Parts,
+    |s: String| {
+        OpenaiInputContent::Parts(vec![serde_json::json!({
+            "type": "input_text",
+            "text": s
+        })])
+    }
+);
 
 /// OpenAI Responses API request body for `POST /v1/responses` ("Create a response").
 ///
@@ -129,37 +159,6 @@ pub enum OpenaiInput {
     Items(Vec<OpenaiInputItem>),
 }
 
-fn deserialize_openai_input<'de, D>(deserializer: D) -> Result<Option<OpenaiInput>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum RawInput {
-        Null(()),
-        String(String),
-        Array(Vec<OpenaiInputItem>),
-    }
-
-    let raw = RawInput::deserialize(deserializer)?;
-    let normalized = match raw {
-        RawInput::Null(()) => OpenaiInput::Null(()),
-        RawInput::String(s) => OpenaiInput::Items(vec![OpenaiInputItem {
-            role: Some("user".to_string()),
-            content: Some(OpenaiInputContent::Parts(vec![json!({
-                "type": "input_text",
-                "text": s
-            })])),
-            // Intentionally omit `type` for synthesized messages; upstream accepts it and this
-            // keeps behavior consistent with "natural" passthrough.
-            extra: BTreeMap::new(),
-        }]),
-        RawInput::Array(items) => OpenaiInput::Items(items),
-    };
-
-    Ok(Some(normalized))
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum OpenaiInputContent {
@@ -167,37 +166,10 @@ pub enum OpenaiInputContent {
     Parts(Vec<Value>),
 }
 
-fn deserialize_openai_message_content<'de, D>(
-    deserializer: D,
-) -> Result<Option<OpenaiInputContent>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum RawContent {
-        Null(()),
-        String(String),
-        Array(Vec<Value>),
-    }
-
-    let raw = RawContent::deserialize(deserializer)?;
-
-    let normalized = match raw {
-        RawContent::Null(()) => OpenaiInputContent::Null(()),
-        RawContent::String(s) => OpenaiInputContent::Parts(vec![json!({
-            "type": "input_text",
-            "text": s
-        })]),
-        RawContent::Array(arr) => OpenaiInputContent::Parts(arr),
-    };
-
-    Ok(Some(normalized))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn openai_request_body_normalizes_string_input_to_message_item() {

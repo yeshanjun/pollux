@@ -1,5 +1,6 @@
 use super::{
     ops::CredentialOps,
+    router::RouteTable,
     scheduler::{CredentialId, CredentialManager},
 };
 use crate::config::CodexResolvedConfig;
@@ -23,8 +24,14 @@ use super::super::{
 /// Public messages handled by the Codex actor.
 #[derive(Debug)]
 pub enum CodexActorMessage {
-    /// Request one available credential for the given model mask. Returns `None` if none available.
-    GetCredential(u64, RpcReplyPort<Option<CodexLease>>),
+    /// Request one available credential for the given model mask.
+    /// The optional `u64` is the route_key (ahash of session_id) for session affinity.
+    /// Returns `None` if none available.
+    GetCredential {
+        model_mask: u64,
+        route_key: Option<u64>,
+        reply: RpcReplyPort<Option<CodexLease>>,
+    },
 
     /// Report rate limiting; start a per-model cooldown for this credential.
     ReportRateLimit {
@@ -72,10 +79,19 @@ pub struct CodexActorHandle {
 }
 
 impl CodexActorHandle {
-    /// Request a credential based on target model mask. Returns `None` if none available.
-    pub async fn get_credential(&self, model_mask: u64) -> Result<Option<CodexLease>, PolluxError> {
-        ractor::call!(self.actor, CodexActorMessage::GetCredential, model_mask)
-            .map_err(|e| PolluxError::RactorError(format!("GetCredential RPC failed: {e}")))
+    /// Request a credential based on target model mask.
+    /// If `route_key` is provided, the actor will attempt session-affinity routing first.
+    pub async fn get_credential(
+        &self,
+        model_mask: u64,
+        route_key: Option<u64>,
+    ) -> Result<Option<CodexLease>, PolluxError> {
+        ractor::call!(self.actor, |reply| CodexActorMessage::GetCredential {
+            model_mask,
+            route_key,
+            reply,
+        })
+        .map_err(|e| PolluxError::RactorError(format!("GetCredential RPC failed: {e}")))
     }
 
     /// Report rate limit; the actor will cool down this credential before reuse.
@@ -142,6 +158,7 @@ impl CodexActorHandle {
 struct CodexActorState {
     ops: CredentialOps,
     manager: CredentialManager,
+    router: RouteTable,
     model_caps_all: u64,
     processor_handle: CodexOauthWorkerHandle,
 }
@@ -202,9 +219,12 @@ impl Actor for CodexActor {
             "CodexActor runtime config loaded"
         );
 
+        let router = RouteTable::new(10_000, std::time::Duration::from_secs(3600));
+
         Ok(CodexActorState {
             ops,
             manager,
+            router,
             model_caps_all,
             processor_handle,
         })
@@ -217,8 +237,12 @@ impl Actor for CodexActor {
         state: &mut Self::State,
     ) -> Result<(), ActorProcessingErr> {
         match message {
-            CodexActorMessage::GetCredential(model_mask, rp) => {
-                self.handle_get_credential(myself.clone(), state, rp, model_mask)
+            CodexActorMessage::GetCredential {
+                model_mask,
+                route_key,
+                reply,
+            } => {
+                self.handle_get_credential(myself.clone(), state, reply, model_mask, route_key)
                     .await;
             }
 
@@ -315,7 +339,25 @@ impl CodexActor {
         state: &mut CodexActorState,
         reply_port: RpcReplyPort<Option<CodexLease>>,
         model_mask: u64,
+        route_key: Option<u64>,
     ) {
+        // Try session-affinity routing first: if the route table has a cached
+        // credential for this (session, model) pair and it's still usable, prefer it.
+        if let Some(rk) = route_key {
+            if let Some(cached_id) = state.router.get(rk, model_mask) {
+                if let Some(lease) = state.manager.try_get_by_id(cached_id, model_mask) {
+                    info!(
+                        "Route hit: ID: {}, Account: {}, model_mask=0x{:016x}, route_key=0x{:016x}",
+                        lease.id, lease.account_id, model_mask, rk,
+                    );
+                    let _ = reply_port.send(Some(lease));
+                    return;
+                }
+                // Cached credential unavailable (cooldown/refreshing/expired/removed),
+                // fall through to normal scheduling.
+            }
+        }
+
         let assignment = state.manager.get_assigned(model_mask);
 
         if !assignment.refresh_ids.is_empty() {
@@ -324,6 +366,11 @@ impl CodexActor {
         }
 
         if let Some(assigned) = assignment.assigned {
+            // Update route table so subsequent requests in this session hit the same credential.
+            if let Some(rk) = route_key {
+                state.router.insert(rk, model_mask, assigned.id);
+            }
+
             info!(
                 "Get credential: ID: {}, Account: {}, model_mask=0x{:016x}, queue_len={}",
                 assigned.id,

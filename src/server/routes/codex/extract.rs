@@ -19,7 +19,6 @@ pub(crate) struct CodexPreprocess {
     pub ctx: CodexContext,
     pub headers: OpenaiRequestHeaders,
     /// AHash of `session_id`, used as a routing/cache key to pin a session to the same account.
-    #[allow(dead_code)]
     pub route_key: u64,
 }
 
@@ -47,13 +46,12 @@ where
     async fn from_request(req: Request, _state: &S) -> Result<Self, Self::Rejection> {
         // Split request so we can extract headers from Parts, then reassemble for Json.
         let (mut parts, body) = req.into_parts();
-        tracing::info!(raw_headers = ?parts.headers, "[Codex] Incoming raw request headers");
+        debug!(raw_headers = ?parts.headers, "[Codex] Incoming raw request headers");
 
         // Rejection = Infallible, so unwrap is safe.
         let codex_headers = OpenaiRequestHeaders::from_request_parts(&mut parts, _state)
             .await
             .unwrap();
-        debug!(headers = ?codex_headers, "[Codex] Extracted request headers");
 
         let req = Request::from_parts(parts, body);
         let Json(body) = Json::<OpenaiRequestBody>::from_request(req, _state).await?;

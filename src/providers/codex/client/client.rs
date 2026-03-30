@@ -10,7 +10,7 @@ use backon::{ExponentialBuilder, Retryable};
 use pollux_schema::{CodexErrorBody, CodexRequestBody};
 
 use std::time::{Duration, Instant};
-use tracing::info;
+use tracing::{debug, info};
 use url::Url;
 
 /// Minimal passthrough client for Codex upstream.
@@ -68,6 +68,7 @@ impl CodexClient {
         handle: &CodexActorHandle,
         model: &str,
         model_mask: u64,
+        route_key: Option<u64>,
         client_stream: bool,
         body: &CodexRequestBody,
         inbound_headers: &OpenaiRequestHeaders,
@@ -89,7 +90,7 @@ impl CodexClient {
             async move {
                 let start = Instant::now();
                 let lease = handle
-                    .get_credential(model_mask)
+                    .get_credential(model_mask, route_key)
                     .await?
                     .ok_or(CodexError::NoAvailableCredential)?;
 
@@ -120,7 +121,7 @@ impl CodexClient {
                 });
 
                 let codex_headers = CodexRequestHeaders::build(&inbound_headers, &lease);
-                info!(codex_headers = ?codex_headers, "[Codex] Prepared upstream headers for request");
+                debug!(codex_headers = ?codex_headers, "[Codex] Prepared upstream headers for request");
                 let upstream_headers = codex_headers.into_header_map();
 
                 let resp = post_json_with_retry(

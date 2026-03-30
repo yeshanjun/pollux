@@ -213,6 +213,29 @@ impl CredentialManager {
         Some(index)
     }
 
+    /// Try to use a specific credential for the given model mask, without altering queue order.
+    /// Returns a lease if the credential exists and is currently usable; `None` otherwise.
+    pub fn try_get_by_id(&self, id: CredentialId, model_mask: u64) -> Option<CodexLease> {
+        let model_index = self.index_from_mask(model_mask)?;
+        let cred = self.creds.get(&id)?;
+
+        if !cred.caps.supports(model_index) {
+            return None;
+        }
+        if self.refreshing.contains(&id) || self.is_model_cooling(id, model_index) {
+            return None;
+        }
+        if cred.is_expired() {
+            return None;
+        }
+
+        Some(CodexLease {
+            id,
+            account_id: cred.inner.account_id().to_string(),
+            access_token: cred.inner.access_token().to_string(),
+        })
+    }
+
     pub fn get_full_credential_copy(&self, id: CredentialId) -> Option<CodexResource> {
         self.creds.get(&id).map(|cred| cred.inner.clone())
     }

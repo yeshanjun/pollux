@@ -1,5 +1,6 @@
 mod actor;
 mod ops;
+mod router;
 mod scheduler;
 
 pub use actor::CodexActorHandle;

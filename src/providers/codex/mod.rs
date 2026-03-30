@@ -31,3 +31,5 @@ pub(crate) static CODEX_RESPONSES_URL: LazyLock<Url> = LazyLock::new(|| {
 /// codex_cli_rs/0.95.0 (Debian 12.0.0; x86_64) vscode/1.108.2
 pub(crate) const CODEX_USER_AGENT: &str =
     "codex_cli_rs/0.117.0 (Debian 12.0.0; x86_64) vscode/1.113.0 (codex-tui; 0.117.0)";
+
+pub(crate) const DEFAULT_ORIGINATOR: &str = "codex_cli_rs";

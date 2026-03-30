@@ -13,7 +13,9 @@ use tracing::debug;
 
 pub(super) async fn codex_response_handler(
     State(state): State<PolluxState>,
-    CodexPreprocess(body, ctx): CodexPreprocess,
+    CodexPreprocess {
+        body, ctx, headers, ..
+    }: CodexPreprocess,
 ) -> Result<Response, CodexError> {
     let codex_body: CodexRequestBody = body.into();
 
@@ -38,6 +40,7 @@ pub(super) async fn codex_response_handler(
             ctx.model_mask,
             ctx.stream,
             &codex_body,
+            &headers,
         )
         .await?;
 

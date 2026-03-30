@@ -10,6 +10,8 @@ license = "AGPL-3.0-only"
 chrono = { version = "0.4", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0" }
+ahash = "0.8"
+moka = { version = "0.12", features = ["sync"] }
 
 [package]
 name = "pollux"
@@ -29,6 +31,8 @@ reqwest = { version = "0.12", default-features = false, features = ["http2", "js
 base64 = "0.22"
 rand = "0.9"
 uuid = { version = "1", features = ["v4"] }
+ahash = { workspace = true }
+moka = { workspace = true }
 oauth2 = "5.0"
 thiserror = "2.0"
 tracing = "0.1"

@@ -1,17 +1,16 @@
 use crate::config::CodexResolvedConfig;
 use crate::error::{CodexError, IsRetryable};
 use crate::providers::codex::CodexActorHandle;
-use crate::providers::manifest::CodexLease;
 use crate::providers::provider_endpoints::ProviderEndpoints;
 use crate::providers::upstream_retry::post_json_with_retry;
 use crate::providers::{ActionForError, policy::classify_upstream_error};
+use crate::server::routes::codex::headers::{CodexRequestHeaders, OpenaiRequestHeaders};
 use crate::utils::logging::with_pretty_json_debug;
 use backon::{ExponentialBuilder, Retryable};
 use pollux_schema::{CodexErrorBody, CodexRequestBody};
-use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
 
 use std::time::{Duration, Instant};
-use tracing::info;
+use tracing::{debug, info};
 use url::Url;
 
 /// Minimal passthrough client for Codex upstream.
@@ -71,12 +70,14 @@ impl CodexClient {
         model_mask: u64,
         client_stream: bool,
         body: &CodexRequestBody,
+        inbound_headers: &OpenaiRequestHeaders,
     ) -> Result<reqwest::Response, CodexError> {
         let handle = handle.clone();
         let client = self.client.clone();
         let endpoints = self.endpoints.clone();
         let body = body.clone();
         let model = model.to_string();
+        let inbound_headers = inbound_headers.clone();
 
         let op = move || {
             let handle = handle.clone();
@@ -84,6 +85,7 @@ impl CodexClient {
             let endpoints = endpoints.clone();
             let body = body.clone();
             let model = model.clone();
+            let inbound_headers = inbound_headers.clone();
             async move {
                 let start = Instant::now();
                 let lease = handle
@@ -117,11 +119,15 @@ impl CodexClient {
                     );
                 });
 
+                let codex_headers = CodexRequestHeaders::build(&inbound_headers, &lease);
+                debug!(codex_headers = ?codex_headers, "[Codex] Prepared upstream headers for request");
+                let upstream_headers = codex_headers.into_header_map();
+
                 let resp = post_json_with_retry(
                     "Codex",
                     &client,
                     endpoints.select(client_stream),
-                    Some(Self::headers(&lease)),
+                    Some(upstream_headers),
                     &body,
                 )
                 .await?;
@@ -208,20 +214,5 @@ impl CodexClient {
                 tracing::warn!("Codex retrying after error {} in {:?}", err, dur);
             })
             .await
-    }
-
-    fn headers(lease: &CodexLease) -> HeaderMap {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            AUTHORIZATION,
-            HeaderValue::from_str(&format!("Bearer {}", lease.access_token))
-                .expect("invalid fixed auth header value"),
-        );
-        headers.insert(
-            "Chatgpt-Account-Id",
-            HeaderValue::from_str(lease.account_id.as_str())
-                .expect("invalid fixed account id header value"),
-        );
-        headers
     }
 }

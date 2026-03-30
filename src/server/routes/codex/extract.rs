@@ -3,7 +3,7 @@ use crate::providers::codex::model_mask;
 use crate::utils::logging::with_pretty_json_debug;
 use axum::{
     Json,
-    extract::{FromRequest, Request},
+    extract::{FromRequest, FromRequestParts, Request},
     http::StatusCode,
 };
 use pollux_schema::OpenaiResponsesErrorObject;
@@ -12,8 +12,16 @@ use tracing::debug;
 use pollux_schema::OpenaiRequestBody;
 
 use super::CodexContext;
+use super::headers::OpenaiRequestHeaders;
 
-pub(crate) struct CodexPreprocess(pub(crate) OpenaiRequestBody, pub(crate) CodexContext);
+pub(crate) struct CodexPreprocess {
+    pub body: OpenaiRequestBody,
+    pub ctx: CodexContext,
+    pub headers: OpenaiRequestHeaders,
+    /// AHash of `session_id`, used as a routing/cache key to pin a session to the same account.
+    #[allow(dead_code)]
+    pub route_key: u64,
+}
 
 impl<S> FromRequest<S> for CodexPreprocess
 where
@@ -37,7 +45,18 @@ where
     /// Notes:
     /// - We intentionally do not `trim()` or otherwise normalize `model`; matching is exact.
     async fn from_request(req: Request, _state: &S) -> Result<Self, Self::Rejection> {
-        let Json(body) = Json::<OpenaiRequestBody>::from_request(req, &()).await?;
+        // Split request so we can extract headers from Parts, then reassemble for Json.
+        let (mut parts, body) = req.into_parts();
+        tracing::info!(raw_headers = ?parts.headers, "[Codex] Incoming raw request headers");
+
+        // Rejection = Infallible, so unwrap is safe.
+        let codex_headers = OpenaiRequestHeaders::from_request_parts(&mut parts, _state)
+            .await
+            .unwrap();
+        debug!(headers = ?codex_headers, "[Codex] Extracted request headers");
+
+        let req = Request::from_parts(parts, body);
+        let Json(body) = Json::<OpenaiRequestBody>::from_request(req, _state).await?;
 
         let model = body.model.as_str();
         if model.is_empty() {
@@ -78,12 +97,24 @@ where
             );
         });
 
+        let route_key = {
+            use std::hash::Hasher;
+            let mut hasher = ahash::AHasher::default();
+            hasher.write(codex_headers.session_id.as_bytes());
+            hasher.finish()
+        };
+
         let ctx = CodexContext {
             model: body.model.clone(),
             stream,
             model_mask,
         };
 
-        Ok(Self(body, ctx))
+        Ok(Self {
+            body,
+            ctx,
+            headers: codex_headers,
+            route_key,
+        })
     }
 }

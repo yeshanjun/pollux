@@ -1,5 +1,7 @@
 use crate::error::OauthError;
 use crate::oauth_utils::{OauthTokenResponse, build_oauth2_client};
+use crate::providers::codex::DEFAULT_ORIGINATOR;
+
 use oauth2::{
     AuthorizationCode, Client as OAuth2Client, CsrfToken, EndpointNotSet, EndpointSet,
     PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, RefreshToken, Scope, StandardRevocableToken,
@@ -19,8 +21,6 @@ const CODEX_CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 /// This matches the Codex CLI flow and keeps the auth/token server stable.
 const OPENAI_AUTH_URL: &str = "https://auth.openai.com/oauth/authorize";
 const OPENAI_TOKEN_URL: &str = "https://auth.openai.com/oauth/token";
-
-const DEFAULT_ORIGINATOR: &str = "codex_cli_rs";
 
 static OAUTH_CALLBACK_URL: LazyLock<RedirectUrl> = LazyLock::new(|| {
     // NOTE: This callback must match the OAuth app's pre-registered redirect URL for

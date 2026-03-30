@@ -492,11 +492,11 @@ impl CodexActor {
             Ok(success) => &success.kind,
             Err(failed) => &failed.original_job.kind,
         };
-        if let Some(id) = kind.credential_id() {
-            if !state.manager.is_refreshing(id) {
-                debug!("ID: {id} credential processing completed/failed after removal; skipping.");
-                return;
-            }
+        if let Some(id) = kind.credential_id()
+            && !state.manager.is_refreshing(id)
+        {
+            debug!("ID: {id} credential processing completed/failed after removal; skipping.");
+            return;
         }
 
         match result {

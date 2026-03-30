@@ -11,6 +11,13 @@ impl MappingAction for CodexErrorBody {
                 Some(ActionForError::ModelUnsupported)
             }
 
+            // 401: account deactivated — token refresh won't help, ban immediately.
+            (StatusCode::UNAUTHORIZED, body)
+                if body.inner.code.as_deref() == Some("account_deactivated") =>
+            {
+                Some(ActionForError::Ban)
+            }
+
             // 402: workspace deactivated or subscription expired.
             (StatusCode::PAYMENT_REQUIRED, body)
                 if body.inner.r#type.as_deref() == Some("deactivated_workspace") =>
@@ -56,6 +63,17 @@ impl MappingAction for CodexErrorBody {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn try_match_rule_bans_account_deactivated_on_401() {
+        let raw = r#"{"error":{"message":"Your OpenAI account has been deactivated","type":"invalid_request_error","code":"account_deactivated","param":null}}"#;
+        let parsed = serde_json::from_str::<CodexErrorBody>(raw).expect("parse sample");
+
+        assert_eq!(
+            parsed.try_match_rule(StatusCode::UNAUTHORIZED),
+            Some(ActionForError::Ban)
+        );
+    }
 
     #[test]
     fn try_match_rule_returns_none_when_type_unknown() {

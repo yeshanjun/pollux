@@ -10,7 +10,7 @@ use backon::{ExponentialBuilder, Retryable};
 use pollux_schema::{CodexErrorBody, CodexRequestBody};
 
 use std::time::{Duration, Instant};
-use tracing::{debug, info};
+use tracing::info;
 use url::Url;
 
 /// Minimal passthrough client for Codex upstream.
@@ -120,7 +120,7 @@ impl CodexClient {
                 });
 
                 let codex_headers = CodexRequestHeaders::build(&inbound_headers, &lease);
-                debug!(codex_headers = ?codex_headers, "[Codex] Prepared upstream headers for request");
+                info!(codex_headers = ?codex_headers, "[Codex] Prepared upstream headers for request");
                 let upstream_headers = codex_headers.into_header_map();
 
                 let resp = post_json_with_retry(

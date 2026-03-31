@@ -8,8 +8,8 @@ use std::time::Duration;
 /// within the same conversation reuse the same upstream account, improving
 /// prompt-cache hit rates on the provider side.
 ///
-/// Stale entries are handled lazily — callers validate each hit via
-/// [`CredentialManager::try_get_by_id`] and fall back to normal scheduling on miss.
+/// Stale entries are handled lazily — the scheduler evaluates each hinted ID
+/// via [`CredentialManager::get_assigned`] and falls back to queue selection on miss.
 pub struct RouteTable {
     cache: Cache<u128, CredentialId>,
 }

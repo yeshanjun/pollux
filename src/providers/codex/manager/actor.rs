@@ -206,7 +206,7 @@ impl Actor for CodexActor {
 
         info!(
             "CodexActor started from DB: {} active creds loaded into {} queues",
-            manager.total_creds(),
+            manager.stats(0).total_creds,
             model_count
         );
 
@@ -341,24 +341,8 @@ impl CodexActor {
         model_mask: u64,
         route_key: Option<u64>,
     ) {
-        // Try session-affinity routing first: if the route table has a cached
-        // credential for this (session, model) pair and it's still usable, prefer it.
-        if let Some(rk) = route_key {
-            if let Some(cached_id) = state.router.get(rk, model_mask) {
-                if let Some(lease) = state.manager.try_get_by_id(cached_id, model_mask) {
-                    info!(
-                        "Route hit: ID: {}, Account: {}, model_mask=0x{:016x}, route_key=0x{:016x}",
-                        lease.id, lease.account_id, model_mask, rk,
-                    );
-                    let _ = reply_port.send(Some(lease));
-                    return;
-                }
-                // Cached credential unavailable (cooldown/refreshing/expired/removed),
-                // fall through to normal scheduling.
-            }
-        }
-
-        let assignment = state.manager.get_assigned(model_mask);
+        let sticky_id = route_key.and_then(|rk| state.router.get(rk, model_mask));
+        let assignment = state.manager.get_assigned(model_mask, sticky_id);
 
         if !assignment.refresh_ids.is_empty() {
             self.handle_report_invalid(myself, state, assignment.refresh_ids)
@@ -366,28 +350,33 @@ impl CodexActor {
         }
 
         if let Some(assigned) = assignment.assigned {
-            // Update route table so subsequent requests in this session hit the same credential.
             if let Some(rk) = route_key {
-                state.router.insert(rk, model_mask, assigned.id);
+                if !assignment.route_hit {
+                    state.router.insert(rk, model_mask, assigned.id);
+                }
             }
 
+            let s = state.manager.stats(model_mask);
             info!(
-                "Get credential: ID: {}, Account: {}, model_mask=0x{:016x}, queue_len={}",
-                assigned.id,
-                assigned.account_id,
-                model_mask,
-                state.manager.queue_len(model_mask)
+                id = assigned.id,
+                account = %assigned.account_id,
+                model_mask = format_args!("0x{model_mask:016x}"),
+                sticky = assignment.route_hit,
+                queue_len = s.queue_len,
+                "[Codex] Credential assigned"
             );
             let _ = reply_port.send(Some(assigned));
             return;
         }
 
+        let s = state.manager.stats(model_mask);
         warn!(
-            "No credential available for model_mask=0x{:016x}, queue_len={}, cooldowns={}, refreshing={}",
-            model_mask,
-            state.manager.queue_len(model_mask),
-            state.manager.cooldown_len(),
-            state.manager.refreshing_len()
+            model_mask = format_args!("0x{model_mask:016x}"),
+            sticky_id = ?sticky_id,
+            queue_len = s.queue_len,
+            cooldowns = s.cooldowns,
+            refreshing = s.refreshing,
+            "[Codex] No credential available"
         );
         let _ = reply_port.send(None);
     }

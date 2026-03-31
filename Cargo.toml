@@ -21,7 +21,7 @@ license = { workspace = true }
 
 
 [dependencies]
-mimalloc = "*"
+mimalloc = { version = "*", features = ["v3"] }
 chrono = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

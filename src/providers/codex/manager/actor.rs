@@ -604,6 +604,8 @@ impl CodexActor {
             Err(failed) => {
                 let job = failed.original_job;
                 let err = failed.error;
+                let account = job.cred.account_id().to_string();
+                warn!("CredentialJob failed for account {}: {}", account, err);
 
                 match job.kind {
                     CredentialJobKind::Refresh(id) => match err {

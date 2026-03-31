@@ -15,7 +15,7 @@ impl MappingAction for CodexErrorBody {
             (StatusCode::UNAUTHORIZED, body)
                 if matches!(
                     body.inner.code.as_deref(),
-                    Some("account_deactivated" | "no_organization")
+                    Some("account_deactivated" | "no_organization" | "token_invalidated")
                 ) =>
             {
                 Some(ActionForError::Ban)
@@ -94,6 +94,24 @@ mod tests {
             "code": "no_organization",
             "param": null
         }
+        }"#;
+        let parsed = serde_json::from_str::<CodexErrorBody>(raw).expect("parse sample");
+
+        assert_eq!(
+            parsed.try_match_rule(StatusCode::UNAUTHORIZED),
+            Some(ActionForError::Ban)
+        );
+    }
+
+    #[test]
+    fn try_match_rule_bans_token_invalidated_on_401() {
+        let raw = r#"{
+            "error": {
+                "message": "Your authentication token has been invalidated. Please try signing in again.",
+                "type": "invalid_request_error",
+                "code": "token_invalidated",
+                "param": null
+            }
         }"#;
         let parsed = serde_json::from_str::<CodexErrorBody>(raw).expect("parse sample");
 

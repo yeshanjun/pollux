@@ -8,5 +8,5 @@ publish = false
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
-ahash = "0.8"
-moka = { version = "0.12", features = ["sync"] }
+ahash = { workspace = true }
+moka = { workspace = true }

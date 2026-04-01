@@ -1,11 +1,44 @@
-use crate::model_catalog::ModelCapabilities;
-use crate::providers::codex::resource::CodexResource;
-use crate::providers::manifest::CodexLease;
 use std::{
     cmp::Reverse,
     collections::{BinaryHeap, HashMap, HashSet, VecDeque},
+    fmt,
     time::{Duration, Instant},
 };
+use tracing::warn;
+
+use crate::model_catalog::ModelCapabilities;
+use crate::providers::codex::resource::CodexResource;
+use crate::providers::manifest::CodexLease;
+
+/// Result of evaluating a single credential candidate for a given model.
+#[derive(Debug)]
+pub(crate) enum LeaseStatus {
+    /// Credential is usable — here is the lease.
+    Ready(CodexLease),
+    /// Credential exists but has expired and needs refreshing.
+    Expired,
+    /// Credential is in a rate-limit cooldown for this model.
+    Cooling,
+    /// Credential is already being refreshed.
+    Refreshing,
+    /// Credential does not support the requested model.
+    Unsupported,
+    /// Credential ID not found in the manager.
+    Missing,
+}
+
+impl fmt::Display for LeaseStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            LeaseStatus::Ready(lease) => write!(f, "ready(account={})", lease.account_id),
+            LeaseStatus::Expired => f.write_str("expired"),
+            LeaseStatus::Cooling => f.write_str("cooling"),
+            LeaseStatus::Refreshing => f.write_str("refreshing"),
+            LeaseStatus::Unsupported => f.write_str("unsupported"),
+            LeaseStatus::Missing => f.write_str("missing"),
+        }
+    }
+}
 
 /// Runtime credential = base data + dynamic capabilities.
 #[derive(Debug, Clone)]
@@ -37,10 +70,19 @@ impl RuntimeCredential {
 pub type CredentialId = u64;
 pub type ModelIndex = usize;
 
+#[derive(Debug, Clone, Copy)]
+pub struct SchedulerStats {
+    pub total_creds: usize,
+    pub queue_len: usize,
+    pub refreshing: usize,
+    pub cooldowns: usize,
+}
+
 #[derive(Debug, Default)]
 pub struct AssignmentResult {
     pub assigned: Option<CodexLease>,
     pub refresh_ids: Vec<CredentialId>,
+    pub route_hit: bool,
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -99,7 +141,17 @@ impl CredentialManager {
         }
     }
 
-    pub fn get_assigned(&mut self, model_mask: u64) -> AssignmentResult {
+    /// Selects a credential for `model_mask`.
+    ///
+    /// When `sticky_id` is provided, it is evaluated first; on any non-ready
+    /// status the method falls back to round-robin queue selection.
+    /// Expired credentials encountered along either path are collected in
+    /// [`AssignmentResult::refresh_ids`].
+    pub fn get_assigned(
+        &mut self,
+        model_mask: u64,
+        sticky_id: Option<CredentialId>,
+    ) -> AssignmentResult {
         self.process_waiting_room();
 
         let mut result = AssignmentResult::default();
@@ -108,36 +160,38 @@ impl CredentialManager {
             return result;
         };
 
+        if let Some(id) = sticky_id {
+            let status = self.check_lease(id, model_index);
+            match status {
+                LeaseStatus::Ready(lease) => {
+                    result.assigned = Some(lease);
+                    result.route_hit = true;
+                    return result;
+                }
+                LeaseStatus::Expired => result.refresh_ids.push(id),
+                _ => {}
+            }
+            if !matches!(status, LeaseStatus::Ready(_)) {
+                warn!(id, %status, "[Codex] Sticky credential skipped");
+            }
+        }
+
         while let Some(id) = self.queues.get_mut(model_index).and_then(|q| q.pop_front()) {
-            let Some(cred) = self.creds.get(&id) else {
-                continue;
-            };
-
-            if !cred.caps.supports(model_index) {
-                continue;
+            let status = self.check_lease(id, model_index);
+            match status {
+                LeaseStatus::Ready(lease) => {
+                    if let Some(queue) = self.queues.get_mut(model_index) {
+                        queue.push_back(id);
+                    }
+                    result.assigned = Some(lease);
+                    return result;
+                }
+                LeaseStatus::Expired => result.refresh_ids.push(id),
+                _ => {}
             }
-
-            if self.refreshing.contains(&id) || self.is_model_cooling(id, model_index) {
-                continue;
+            if !matches!(status, LeaseStatus::Ready(_)) {
+                warn!(id, %status, "[Codex] Queue candidate skipped");
             }
-
-            if cred.is_expired() {
-                result.refresh_ids.push(id);
-                continue;
-            }
-
-            let token = cred.inner.access_token().to_string();
-
-            if let Some(queue) = self.queues.get_mut(model_index) {
-                queue.push_back(id);
-            }
-
-            result.assigned = Some(CodexLease {
-                id,
-                account_id: cred.inner.account_id().to_string(),
-                access_token: token,
-            });
-            return result;
         }
         result
     }
@@ -223,30 +277,55 @@ impl CredentialManager {
             .map(|cred| cred.inner.account_id().to_string())
     }
 
+    pub fn stats(&self, model_mask: u64) -> SchedulerStats {
+        let queue_len = self
+            .index_from_mask(model_mask)
+            .and_then(|i| self.queues.get(i).map(|q| q.len()))
+            .unwrap_or(0);
+
+        SchedulerStats {
+            total_creds: self.creds.len(),
+            queue_len,
+            refreshing: self.refreshing.len(),
+            cooldowns: self.cooldown_map.len(),
+        }
+    }
+
+    /// Single evaluation path for any credential candidate against a model index.
+    fn check_lease(&self, id: CredentialId, model_index: ModelIndex) -> LeaseStatus {
+        let Some(cred) = self.creds.get(&id) else {
+            return LeaseStatus::Missing;
+        };
+
+        if !cred.caps.supports(model_index) {
+            return LeaseStatus::Unsupported;
+        }
+
+        if self.refreshing.contains(&id) {
+            return LeaseStatus::Refreshing;
+        }
+
+        if self.is_model_cooling(id, model_index) {
+            return LeaseStatus::Cooling;
+        }
+
+        if cred.is_expired() {
+            return LeaseStatus::Expired;
+        }
+
+        LeaseStatus::Ready(CodexLease {
+            id,
+            account_id: cred.inner.account_id().to_string(),
+            access_token: cred.inner.access_token().to_string(),
+        })
+    }
+
     pub fn contains(&self, id: CredentialId) -> bool {
         self.creds.contains_key(&id)
     }
 
-    pub fn queue_len(&self, model_mask: u64) -> usize {
-        self.index_from_mask(model_mask)
-            .and_then(|model_index| self.queues.get(model_index).map(|q| q.len()))
-            .unwrap_or(0)
-    }
-
-    pub fn total_creds(&self) -> usize {
-        self.creds.len()
-    }
-
-    pub fn refreshing_len(&self) -> usize {
-        self.refreshing.len()
-    }
-
     pub fn is_refreshing(&self, id: CredentialId) -> bool {
         self.refreshing.contains(&id)
-    }
-
-    pub fn cooldown_len(&self) -> usize {
-        self.cooldown_map.len()
     }
 
     fn is_model_cooling(&self, id: CredentialId, model_index: ModelIndex) -> bool {
@@ -301,13 +380,13 @@ mod tests {
 
         manager.report_rate_limit(1, mask(0), std::time::Duration::from_millis(10));
 
-        let assigned_during_cooldown = manager.get_assigned(mask(0)).assigned;
+        let assigned_during_cooldown = manager.get_assigned(mask(0), None).assigned;
         assert!(assigned_during_cooldown.is_none());
 
         std::thread::sleep(std::time::Duration::from_millis(30));
 
         let assigned_after = manager
-            .get_assigned(mask(0))
+            .get_assigned(mask(0), None)
             .assigned
             .expect("assigned after cooldown");
         assert_eq!(assigned_after.account_id, "acct1");
@@ -321,7 +400,7 @@ mod tests {
 
         manager.add_credential(1, make_expired_credential("acct1"), caps.bits());
 
-        let result = manager.get_assigned(mask(0));
+        let result = manager.get_assigned(mask(0), None);
         assert!(result.assigned.is_none());
         assert_eq!(result.refresh_ids, vec![1]);
     }
@@ -337,14 +416,14 @@ mod tests {
 
         manager.mark_model_unsupported(1, mask(1));
 
-        let unsupported = manager.get_assigned(mask(1));
+        let unsupported = manager.get_assigned(mask(1), None);
         assert!(unsupported.assigned.is_none());
         assert!(unsupported.refresh_ids.is_empty());
-        assert_eq!(manager.queue_len(mask(1)), 0);
-        assert_eq!(manager.queue_len(mask(0)), 1);
+        assert_eq!(manager.stats(mask(1)).queue_len, 0);
+        assert_eq!(manager.stats(mask(0)).queue_len, 1);
 
         let supported = manager
-            .get_assigned(mask(0))
+            .get_assigned(mask(0), None)
             .assigned
             .expect("assigned for supported model");
         assert_eq!(supported.account_id, "acct1");
@@ -361,16 +440,116 @@ mod tests {
 
         manager.report_rate_limit(1, mask(0), std::time::Duration::from_secs(60));
 
-        let assigned_during_cooldown = manager.get_assigned(mask(0)).assigned;
+        let assigned_during_cooldown = manager.get_assigned(mask(0), None).assigned;
         assert!(assigned_during_cooldown.is_none());
-        assert_eq!(manager.queue_len(mask(0)), 0);
+        assert_eq!(manager.stats(mask(0)).queue_len, 0);
 
         let assigned_other_model = manager
-            .get_assigned(mask(1))
+            .get_assigned(mask(1), None)
             .assigned
             .expect("assigned for other model during cooldown");
         assert_eq!(assigned_other_model.account_id, "acct1");
 
-        assert_eq!(manager.queue_len(mask(1)), 1);
+        assert_eq!(manager.stats(mask(1)).queue_len, 1);
+    }
+
+    // ── hint path tests ──
+
+    #[test]
+    fn hint_valid_credential_returns_lease_with_route_hit() {
+        let mut manager = CredentialManager::new(1);
+        let mut caps = ModelCapabilities::none();
+        caps.enable(0);
+        manager.add_credential(1, make_credential("acct1"), caps.bits());
+
+        let result = manager.get_assigned(mask(0), Some(1));
+        assert!(result.route_hit);
+        let lease = result.assigned.expect("hint should produce a lease");
+        assert_eq!(lease.id, 1);
+        assert_eq!(lease.account_id, "acct1");
+    }
+
+    #[test]
+    fn hint_expired_triggers_refresh_and_falls_back() {
+        let mut manager = CredentialManager::new(1);
+        let mut caps = ModelCapabilities::none();
+        caps.enable(0);
+        manager.add_credential(1, make_expired_credential("acct1"), caps.bits());
+        manager.add_credential(2, make_credential("acct2"), caps.bits());
+
+        let result = manager.get_assigned(mask(0), Some(1));
+        assert!(!result.route_hit);
+        assert!(result.refresh_ids.contains(&1));
+        let lease = result.assigned.expect("should fall back to queue");
+        assert_eq!(lease.account_id, "acct2");
+    }
+
+    #[test]
+    fn hint_cooling_falls_back_to_queue() {
+        let mut manager = CredentialManager::new(1);
+        let mut caps = ModelCapabilities::none();
+        caps.enable(0);
+        manager.add_credential(1, make_credential("acct1"), caps.bits());
+        manager.add_credential(2, make_credential("acct2"), caps.bits());
+
+        manager.report_rate_limit(1, mask(0), std::time::Duration::from_secs(60));
+
+        let result = manager.get_assigned(mask(0), Some(1));
+        assert!(!result.route_hit);
+        assert!(result.refresh_ids.is_empty());
+        let lease = result.assigned.expect("should fall back to queue");
+        assert_eq!(lease.account_id, "acct2");
+    }
+
+    #[test]
+    fn hint_refreshing_no_duplicate_refresh_falls_back() {
+        let mut manager = CredentialManager::new(1);
+        let mut caps = ModelCapabilities::none();
+        caps.enable(0);
+        manager.add_credential(1, make_credential("acct1"), caps.bits());
+        manager.add_credential(2, make_credential("acct2"), caps.bits());
+
+        manager.mark_refreshing(1);
+
+        let result = manager.get_assigned(mask(0), Some(1));
+        assert!(!result.route_hit);
+        assert!(
+            !result.refresh_ids.contains(&1),
+            "should not duplicate refresh"
+        );
+        let lease = result.assigned.expect("should fall back to queue");
+        assert_eq!(lease.account_id, "acct2");
+    }
+
+    #[test]
+    fn hint_removed_falls_back_to_queue() {
+        let mut manager = CredentialManager::new(1);
+        let mut caps = ModelCapabilities::none();
+        caps.enable(0);
+        manager.add_credential(2, make_credential("acct2"), caps.bits());
+
+        // hint points to non-existent credential
+        let result = manager.get_assigned(mask(0), Some(999));
+        assert!(!result.route_hit);
+        let lease = result.assigned.expect("should fall back to queue");
+        assert_eq!(lease.account_id, "acct2");
+    }
+
+    #[test]
+    fn hint_unsupported_model_falls_back_to_queue() {
+        let mut manager = CredentialManager::new(2);
+        let mut caps_0 = ModelCapabilities::none();
+        caps_0.enable(0);
+        let mut caps_1 = ModelCapabilities::none();
+        caps_1.enable(1);
+
+        manager.add_credential(1, make_credential("acct1"), caps_0.bits());
+        manager.add_credential(2, make_credential("acct2"), caps_1.bits());
+
+        // hint credential 1 for model 1, but cred 1 only supports model 0
+        let result = manager.get_assigned(mask(1), Some(1));
+        assert!(!result.route_hit);
+        let lease = result.assigned.expect("should fall back to queue");
+        assert_eq!(lease.account_id, "acct2");
     }
 }

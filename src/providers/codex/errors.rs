@@ -11,6 +11,16 @@ impl MappingAction for CodexErrorBody {
                 Some(ActionForError::ModelUnsupported)
             }
 
+            // 401: account deactivated or missing org — token refresh won't help, ban immediately.
+            (StatusCode::UNAUTHORIZED, body)
+                if matches!(
+                    body.inner.code.as_deref(),
+                    Some("account_deactivated" | "no_organization" | "token_invalidated")
+                ) =>
+            {
+                Some(ActionForError::Ban)
+            }
+
             // 402: workspace deactivated or subscription expired.
             (StatusCode::PAYMENT_REQUIRED, body)
                 if body.inner.r#type.as_deref() == Some("deactivated_workspace") =>
@@ -56,6 +66,60 @@ impl MappingAction for CodexErrorBody {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn try_match_rule_bans_account_deactivated_on_401() {
+        let raw = r#"{
+        "error": {
+            "message": "Your OpenAI account has been deactivated, please check your email for more information. If you feel this is an error, contact us through our help center at help.openai.com.",
+            "type": "invalid_request_error",
+            "code": "account_deactivated",
+            "param": null
+        }
+        }"#;
+        let parsed = serde_json::from_str::<CodexErrorBody>(raw).expect("parse sample");
+
+        assert_eq!(
+            parsed.try_match_rule(StatusCode::UNAUTHORIZED),
+            Some(ActionForError::Ban)
+        );
+    }
+
+    #[test]
+    fn try_match_rule_bans_no_organization_on_401() {
+        let raw = r#"{
+        "error": {
+            "message": "You must be a member of an organization to use the API. Please contact us through our help center at help.openai.com.",
+            "type": "invalid_request_error",
+            "code": "no_organization",
+            "param": null
+        }
+        }"#;
+        let parsed = serde_json::from_str::<CodexErrorBody>(raw).expect("parse sample");
+
+        assert_eq!(
+            parsed.try_match_rule(StatusCode::UNAUTHORIZED),
+            Some(ActionForError::Ban)
+        );
+    }
+
+    #[test]
+    fn try_match_rule_bans_token_invalidated_on_401() {
+        let raw = r#"{
+            "error": {
+                "message": "Your authentication token has been invalidated. Please try signing in again.",
+                "type": "invalid_request_error",
+                "code": "token_invalidated",
+                "param": null
+            }
+        }"#;
+        let parsed = serde_json::from_str::<CodexErrorBody>(raw).expect("parse sample");
+
+        assert_eq!(
+            parsed.try_match_rule(StatusCode::UNAUTHORIZED),
+            Some(ActionForError::Ban)
+        );
+    }
 
     #[test]
     fn try_match_rule_returns_none_when_type_unknown() {

@@ -64,6 +64,15 @@ impl From<PkgsRequestTokenError> for OauthError {
             },
             RequestTokenError::Parse(parse_err, body) => {
                 let body_str = String::from_utf8_lossy(&body);
+
+                if let Ok(json) = serde_json::from_str::<Value>(&body_str)
+                    && json.get("error").is_some()
+                {
+                    return OauthError::ServerResponse {
+                        error: json.to_string(),
+                    };
+                }
+
                 let body = body_str
                     .char_indices()
                     .nth(100)

@@ -1,5 +1,6 @@
 use super::{
     ops::CredentialOps,
+    router::RouteTable,
     scheduler::{CredentialId, CredentialManager},
 };
 use crate::config::CodexResolvedConfig;
@@ -15,13 +16,22 @@ use ractor::{Actor, ActorProcessingErr, ActorRef, RpcReplyPort};
 use std::{sync::Arc, time::Duration};
 use tracing::{debug, error, info, warn};
 
-use super::super::{CodexRefresherHandle, RefreshOutcome};
+use super::super::{
+    CodexOauthWorkerHandle, CredentialJob, CredentialJobKind, CredentialProcessError,
+    CredentialProcessResult,
+};
 
 /// Public messages handled by the Codex actor.
 #[derive(Debug)]
 pub enum CodexActorMessage {
-    /// Request one available credential for the given model mask. Returns `None` if none available.
-    GetCredential(u64, RpcReplyPort<Option<CodexLease>>),
+    /// Request one available credential for the given model mask.
+    /// The optional `u64` is the route_key (ahash of session_id) for session affinity.
+    /// Returns `None` if none available.
+    GetCredential {
+        model_mask: u64,
+        route_key: Option<u64>,
+        reply: RpcReplyPort<Option<CodexLease>>,
+    },
 
     /// Report rate limiting; start a per-model cooldown for this credential.
     ReportRateLimit {
@@ -41,20 +51,21 @@ pub enum CodexActorMessage {
 
     /// Submit a trusted OAuth token response (from the server-side OAuth exchange).
     ///
-    /// This should already contain access_token + expiry + id_token. The actor will decode
-    /// identity from id_token, persist into DB, then activate in memory.
+    /// This should already contain access_token + expiry + id_token. The actor will convert it
+    /// into a trusted ingest job, then persist+activate it through the same completion path as
+    /// other credential ingest flows.
     SubmitTrustedOauth(OauthTokenResponse),
 
-    /// Submit untrusted refresh token seeds and trigger one refresh pass for each.
+    /// Submit untrusted refresh token seeds and trigger zero-trust ingestion for each.
     ///
     /// This is intended for 0-trust ingestion (e.g. an add-credentials endpoint). The actor will
     /// only persist+activate after a refresh succeeds and identity can be derived.
     SubmitUntrustedSeeds(Vec<CodexRefreshTokenSeed>),
 
     // Internal messages (sent by the actor itself / workers)
-    /// Token refresh has completed; update stored credential and re-enqueue if ok.
-    RefreshComplete { outcome: RefreshOutcome },
-    /// A credential has been refreshed and stored; activate it in memory queues.
+    /// Background credential processing has completed.
+    ProcessComplete { result: CredentialProcessResult },
+    /// A credential has been processed and stored; activate it in memory queues.
     ActivateCredential {
         id: CredentialId,
         credential: CodexResource,
@@ -68,10 +79,19 @@ pub struct CodexActorHandle {
 }
 
 impl CodexActorHandle {
-    /// Request a credential based on target model mask. Returns `None` if none available.
-    pub async fn get_credential(&self, model_mask: u64) -> Result<Option<CodexLease>, PolluxError> {
-        ractor::call!(self.actor, CodexActorMessage::GetCredential, model_mask)
-            .map_err(|e| PolluxError::RactorError(format!("GetCredential RPC failed: {e}")))
+    /// Request a credential based on target model mask.
+    /// If `route_key` is provided, the actor will attempt session-affinity routing first.
+    pub async fn get_credential(
+        &self,
+        model_mask: u64,
+        route_key: Option<u64>,
+    ) -> Result<Option<CodexLease>, PolluxError> {
+        ractor::call!(self.actor, |reply| CodexActorMessage::GetCredential {
+            model_mask,
+            route_key,
+            reply,
+        })
+        .map_err(|e| PolluxError::RactorError(format!("GetCredential RPC failed: {e}")))
     }
 
     /// Report rate limit; the actor will cool down this credential before reuse.
@@ -104,7 +124,7 @@ impl CodexActorHandle {
         let _ = ractor::cast!(self.actor, CodexActorMessage::ReportBaned { id });
     }
 
-    /// Submit a trusted OAuth token response to the actor for persistence + activation.
+    /// Submit a trusted OAuth token response to the actor for trusted ingest + persistence.
     pub(crate) async fn submit_trusted_oauth(&self, token_response: OauthTokenResponse) {
         let _ = ractor::cast!(
             self.actor,
@@ -112,7 +132,7 @@ impl CodexActorHandle {
         );
     }
 
-    /// Submit refresh tokens as 0-trust seeds. The actor will refresh, then persist+activate.
+    /// Submit refresh tokens as 0-trust seeds. The actor will verify, then persist+activate.
     pub(crate) async fn submit_refresh_tokens(&self, refresh_tokens: Vec<String>) {
         let seeds: Vec<CodexRefreshTokenSeed> = refresh_tokens
             .into_iter()
@@ -126,20 +146,21 @@ impl CodexActorHandle {
         let _ = ractor::cast!(self.actor, CodexActorMessage::SubmitUntrustedSeeds(seeds));
     }
 
-    pub(in crate::providers::codex) fn send_refresh_complete(
+    pub(in crate::providers::codex) fn send_process_complete(
         &self,
-        outcome: RefreshOutcome,
+        result: CredentialProcessResult,
     ) -> Result<(), PolluxError> {
-        ractor::cast!(self.actor, CodexActorMessage::RefreshComplete { outcome })
-            .map_err(|e| PolluxError::RactorError(format!("RefreshComplete cast failed: {e}")))
+        ractor::cast!(self.actor, CodexActorMessage::ProcessComplete { result })
+            .map_err(|e| PolluxError::RactorError(format!("ProcessComplete cast failed: {e}")))
     }
 }
 
 struct CodexActorState {
     ops: CredentialOps,
     manager: CredentialManager,
+    router: RouteTable,
     model_caps_all: u64,
-    refresh_handle: CodexRefresherHandle,
+    processor_handle: CodexOauthWorkerHandle,
 }
 
 struct CodexActor;
@@ -157,7 +178,7 @@ impl Actor for CodexActor {
     ) -> Result<Self::State, ActorProcessingErr> {
         let ops = CredentialOps::new(db);
 
-        let refresh_handle = CodexRefresherHandle::spawn(
+        let processor_handle = CodexOauthWorkerHandle::spawn(
             CodexActorHandle {
                 actor: myself.clone(),
             },
@@ -185,7 +206,7 @@ impl Actor for CodexActor {
 
         info!(
             "CodexActor started from DB: {} active creds loaded into {} queues",
-            manager.total_creds(),
+            manager.stats(0).total_creds,
             model_count
         );
 
@@ -198,11 +219,14 @@ impl Actor for CodexActor {
             "CodexActor runtime config loaded"
         );
 
+        let router = RouteTable::new(10_000, std::time::Duration::from_secs(3600));
+
         Ok(CodexActorState {
             ops,
             manager,
+            router,
             model_caps_all,
-            refresh_handle,
+            processor_handle,
         })
     }
 
@@ -213,8 +237,12 @@ impl Actor for CodexActor {
         state: &mut Self::State,
     ) -> Result<(), ActorProcessingErr> {
         match message {
-            CodexActorMessage::GetCredential(model_mask, rp) => {
-                self.handle_get_credential(myself.clone(), state, rp, model_mask)
+            CodexActorMessage::GetCredential {
+                model_mask,
+                route_key,
+                reply,
+            } => {
+                self.handle_get_credential(myself.clone(), state, reply, model_mask, route_key)
                     .await;
             }
 
@@ -240,7 +268,7 @@ impl Actor for CodexActor {
             }
 
             CodexActorMessage::SubmitTrustedOauth(token_response) => {
-                self.handle_ingest_oauth_response(myself.clone(), state, token_response, None)
+                self.handle_submit_trusted_oauth(state, token_response)
                     .await;
             }
 
@@ -248,8 +276,8 @@ impl Actor for CodexActor {
                 self.handle_submit_untrusted_seeds(state, seeds).await;
             }
 
-            CodexActorMessage::RefreshComplete { outcome } => {
-                self.handle_refresh_complete(myself.clone(), state, outcome)
+            CodexActorMessage::ProcessComplete { result } => {
+                self.handle_process_complete(myself.clone(), state, result)
                     .await;
             }
 
@@ -311,8 +339,10 @@ impl CodexActor {
         state: &mut CodexActorState,
         reply_port: RpcReplyPort<Option<CodexLease>>,
         model_mask: u64,
+        route_key: Option<u64>,
     ) {
-        let assignment = state.manager.get_assigned(model_mask);
+        let sticky_id = route_key.and_then(|rk| state.router.get(rk, model_mask));
+        let assignment = state.manager.get_assigned(model_mask, sticky_id);
 
         if !assignment.refresh_ids.is_empty() {
             self.handle_report_invalid(myself, state, assignment.refresh_ids)
@@ -320,23 +350,33 @@ impl CodexActor {
         }
 
         if let Some(assigned) = assignment.assigned {
+            if let Some(rk) = route_key {
+                if !assignment.route_hit {
+                    state.router.insert(rk, model_mask, assigned.id);
+                }
+            }
+
+            let s = state.manager.stats(model_mask);
             info!(
-                "Get credential: ID: {}, Account: {}, model_mask=0x{:016x}, queue_len={}",
-                assigned.id,
-                assigned.account_id,
-                model_mask,
-                state.manager.queue_len(model_mask)
+                id = assigned.id,
+                account = %assigned.account_id,
+                model_mask = format_args!("0x{model_mask:016x}"),
+                sticky = assignment.route_hit,
+                queue_len = s.queue_len,
+                "[Codex] Credential assigned"
             );
             let _ = reply_port.send(Some(assigned));
             return;
         }
 
+        let s = state.manager.stats(model_mask);
         warn!(
-            "No credential available for model_mask=0x{:016x}, queue_len={}, cooldowns={}, refreshing={}",
-            model_mask,
-            state.manager.queue_len(model_mask),
-            state.manager.cooldown_len(),
-            state.manager.refreshing_len()
+            model_mask = format_args!("0x{model_mask:016x}"),
+            sticky_id = ?sticky_id,
+            queue_len = s.queue_len,
+            cooldowns = s.cooldowns,
+            refreshing = s.refreshing,
+            "[Codex] No credential available"
         );
         let _ = reply_port.send(None);
     }
@@ -386,17 +426,17 @@ impl CodexActor {
             return;
         }
 
-        let refresh_handle = state.refresh_handle.clone();
+        let processor_handle = state.processor_handle.clone();
         tokio::spawn(async move {
             for (id, cred) in jobs_to_send {
-                if let Err(e) = refresh_handle.submit_refresh(id, cred.clone()) {
-                    warn!("ID: {id} refresh enqueue failed. Rolling back.");
-                    let _ = myself.cast(CodexActorMessage::RefreshComplete {
-                        outcome: RefreshOutcome::RefreshCredential {
-                            id,
-                            cred,
-                            result: Err(e),
-                        },
+                let job = CredentialJob::refresh(id, cred);
+                if let Err(e) = processor_handle.submit(job.clone()) {
+                    warn!("ID: {id} credential refresh enqueue failed. Rolling back.");
+                    let _ = myself.cast(CodexActorMessage::ProcessComplete {
+                        result: Err(CredentialProcessError {
+                            original_job: job,
+                            error: e,
+                        }),
                     });
                 } else {
                     debug!("ID: {id} refresh enqueued.");
@@ -414,21 +454,16 @@ impl CodexActor {
 
         state.manager.delete_credential(id);
 
+        info!("ID: {id}, Account: {account_id}, banned. removed_from_mem={removed}");
+
         let ops = state.ops.clone();
-        let account_id_for_db = account_id.clone();
         tokio::spawn(async move {
             if let Err(e) = ops.set_status(id, false).await {
                 warn!(
-                    "ID: {id}, Account: {account_id_for_db}, ban report failed to update DB status: {}",
-                    e
+                    "ID: {id}, Account: {account_id}, ban report failed to update DB status: {e}"
                 );
             }
         });
-
-        info!(
-            "ID: {id}, Account: {account_id}, banned. removed_from_mem={}",
-            removed
-        );
     }
 
     async fn handle_submit_untrusted_seeds(
@@ -438,96 +473,131 @@ impl CodexActor {
     ) {
         let count = seeds.len();
         info!(count, "Batch submit received, dispatching...");
-        let refresh_handle = state.refresh_handle.clone();
+        let processor_handle = state.processor_handle.clone();
 
         tokio::spawn(async move {
             for seed in seeds {
-                if let Err(e) = refresh_handle.submit_initial_refresh(seed) {
-                    warn!("Failed to enqueue submit refresh: {}", e);
+                let job = match CredentialJob::ingest_untrusted_seed(seed) {
+                    Ok(job) => job,
+                    Err(e) => {
+                        warn!(
+                            "Failed to build untrusted Codex ingest job from seed: {}",
+                            e
+                        );
+                        continue;
+                    }
+                };
+
+                if let Err(e) = processor_handle.submit(job) {
+                    warn!("Failed to enqueue untrusted Codex ingest job: {}", e);
                     break;
                 }
             }
         });
     }
 
-    async fn handle_ingest_oauth_response(
+    async fn handle_submit_trusted_oauth(
         &self,
-        myself: ActorRef<CodexActorMessage>,
         state: &mut CodexActorState,
         token_response: OauthTokenResponse,
-        refresh_seed: Option<CodexRefreshTokenSeed>,
     ) {
-        let cred = match CodexResource::try_from_oauth_token_response(token_response, refresh_seed)
-        {
-            Ok(cred) => cred,
-            Err(e) => {
-                warn!("Codex credential submit failed: {}", e);
-                return;
-            }
-        };
-
-        let account_id = cred.account_id().to_string();
-        let ops = state.ops.clone();
-
+        info!("Trusted OAuth submit received, dispatching trusted ingest...");
+        let processor_handle = state.processor_handle.clone();
         tokio::spawn(async move {
-            let cred_for_db = cred.clone();
-            match ops.upsert(cred_for_db).await {
-                Ok(new_id) => {
-                    if let Err(e) = myself.cast(CodexActorMessage::ActivateCredential {
-                        id: new_id,
-                        credential: cred,
-                    }) {
-                        warn!("Account: {account_id} ActivateCredential failed: {}", e);
-                    }
+            let job = match CredentialJob::ingest_trusted_oauth(token_response) {
+                Ok(job) => job,
+                Err(e) => {
+                    warn!("Trusted OAuth submit ignored: {}", e);
+                    return;
                 }
-                Err(e) => warn!("Account: {account_id} DB upsert failed: {}", e),
+            };
+
+            if let Err(e) = processor_handle.submit(job) {
+                warn!("Trusted OAuth submit enqueue failed: {}", e);
             }
         });
     }
 
-    async fn handle_refresh_complete(
+    async fn handle_process_complete(
         &self,
         myself: ActorRef<CodexActorMessage>,
         state: &mut CodexActorState,
-        outcome: RefreshOutcome,
+        result: CredentialProcessResult,
     ) {
-        match outcome {
-            RefreshOutcome::RefreshCredential { id, cred, result } => match result {
-                Ok(()) => {
-                    if !state.manager.is_refreshing(id) {
-                        debug!("ID: {id} refresh completed after removal; skipping.");
-                        return;
+        let kind = match &result {
+            Ok(success) => &success.kind,
+            Err(failed) => &failed.original_job.kind,
+        };
+        if let Some(id) = kind.credential_id()
+            && !state.manager.is_refreshing(id)
+        {
+            debug!("ID: {id} credential processing completed/failed after removal; skipping.");
+            return;
+        }
+
+        match result {
+            Ok(success) => {
+                let account_id = success.cred.account_id().to_string();
+                let cred = success.cred;
+                match success.kind {
+                    CredentialJobKind::Refresh(id) => {
+                        debug!("ID: {id} refresh success. Updating manager and persisting.");
+                        state
+                            .manager
+                            .add_credential(id, cred.clone(), state.model_caps_all);
+
+                        let ops = state.ops.clone();
+                        tokio::spawn(async move {
+                            let patch = CodexPatch {
+                                email: cred.email().map(ToString::to_string),
+                                refresh_token: Some(cred.refresh_token().to_string()),
+                                access_token: Some(cred.access_token().to_string()),
+                                expiry: Some(cred.expiry()),
+                                chatgpt_plan_type: cred
+                                    .chatgpt_plan_type()
+                                    .map(ToString::to_string),
+                                ..Default::default()
+                            };
+
+                            if let Err(e) = ops.update_by_id(id, patch).await {
+                                warn!("ID: {id} DB update failed: {}", e);
+                            }
+                        });
                     }
-
-                    debug!("ID: {id} refresh success. Updating manager and persisting.");
-                    state
-                        .manager
-                        .add_credential(id, cred.clone(), state.model_caps_all);
-
-                    let ops = state.ops.clone();
-                    tokio::spawn(async move {
-                        let patch = CodexPatch {
-                            email: cred.email().map(ToString::to_string),
-                            refresh_token: Some(cred.refresh_token().to_string()),
-                            access_token: Some(cred.access_token().to_string()),
-                            expiry: Some(cred.expiry()),
-                            chatgpt_plan_type: cred.chatgpt_plan_type().map(ToString::to_string),
-                            ..Default::default()
-                        };
-
-                        if let Err(e) = ops.update_by_id(id, patch).await {
-                            warn!("ID: {id} DB update failed: {}", e);
-                        }
-                    });
+                    CredentialJobKind::IngestUntrusted | CredentialJobKind::IngestTrusted => {
+                        info!("Account: {account_id} Codex ingest success. Inserting to DB.");
+                        let ops = state.ops.clone();
+                        let myself = myself.clone();
+                        tokio::spawn(async move {
+                            let cred_for_db = cred.clone();
+                            match ops.upsert(cred_for_db).await {
+                                Ok(new_id) => {
+                                    if let Err(e) =
+                                        myself.cast(CodexActorMessage::ActivateCredential {
+                                            id: new_id,
+                                            credential: cred,
+                                        })
+                                    {
+                                        warn!(
+                                            "Account: {account_id} ActivateCredential failed: {}",
+                                            e
+                                        );
+                                    }
+                                }
+                                Err(e) => warn!("Account: {account_id} DB upsert failed: {}", e),
+                            }
+                        });
+                    }
                 }
+            }
+            Err(failed) => {
+                let job = failed.original_job;
+                let err = failed.error;
+                let account = job.cred.account_id().to_string();
+                warn!("CredentialJob failed for account {}: {}", account, err);
 
-                Err(err) => {
-                    if !state.manager.is_refreshing(id) {
-                        debug!("ID: {id} refresh failed after removal; skipping.");
-                        return;
-                    }
-
-                    match err {
+                match job.kind {
+                    CredentialJobKind::Refresh(id) => match err {
                         PolluxError::Oauth(OauthError::ServerResponse { .. }) => {
                             error!("ID: {id} refresh failed permanently: {}. Removing.", err);
                             state.manager.delete_credential(id);
@@ -539,45 +609,30 @@ impl CodexActor {
                                 }
                             });
                         }
-
                         _ => {
                             warn!(
                                 "ID: {id} refresh failed due to transient error: {}. Keeping credential.",
                                 err
                             );
-                            state.manager.add_credential(id, cred, state.model_caps_all);
+                            state
+                                .manager
+                                .add_credential(id, job.cred, state.model_caps_all);
                         }
+                    },
+                    CredentialJobKind::IngestUntrusted => {
+                        warn!(
+                            "Untrusted Codex credential ingest failed; discarding job. Details: {}",
+                            err
+                        );
+                    }
+                    CredentialJobKind::IngestTrusted => {
+                        warn!(
+                            "Trusted Codex OAuth ingest failed; discarding job. Details: {}",
+                            err
+                        );
                     }
                 }
-            },
-
-            RefreshOutcome::InitialOauthTokenResponse { seed, result } => match result {
-                Ok(token_response) => {
-                    self.handle_ingest_oauth_response(
-                        myself.clone(),
-                        state,
-                        token_response,
-                        Some(seed),
-                    )
-                    .await;
-                }
-                Err(err) => {
-                    let context = match &err {
-                        PolluxError::JsonError(_)
-                        | PolluxError::Oauth(OauthError::Parse { .. }) => {
-                            " (upstream token endpoint returned unexpected JSON)"
-                        }
-                        PolluxError::Oauth(OauthError::ServerResponse { .. }) => {
-                            " (oauth2 server response error)"
-                        }
-                        _ => "",
-                    };
-                    warn!(
-                        "Codex initial refresh failed; discarding seed{}. Details: {}",
-                        context, err
-                    );
-                }
-            },
+            }
         }
     }
 }

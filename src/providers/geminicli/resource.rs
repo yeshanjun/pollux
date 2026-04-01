@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(super) struct GeminiCliResource {
+pub struct GeminiCliResource {
     email: Option<String>,
     sub: String,
     project_id: String,
@@ -124,7 +124,7 @@ impl GeminiCliResource {
     }
 
     /// Build a resource from any JSON-like payload by applying updates to a default struct.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "bench"))]
     pub fn from_payload(payload: impl Serialize) -> Result<Self, PolluxError> {
         let mut cred = GeminiCliResource::default();
         cred.update_credential(payload)?;

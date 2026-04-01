@@ -55,8 +55,26 @@ async-trait = "0.1"
 pollux-schema = { path = "pollux-schema" }
 pollux-thoughtsig-core = { path = "pollux-thoughtsig-core" }
 
+[features]
+bench = []
+
 [dev-dependencies]
 tower = "0.5"
+criterion = { version = "0.8", features = ["html_reports", "async_tokio"] }
+tokio = { version = "1.48", features = ["macros", "rt-multi-thread"] }
+
+[[bench]]
+name = "model_catalog"
+harness = false
+
+[[bench]]
+name = "scheduler"
+harness = false
+required-features = ["bench"]
+
+[[bench]]
+name = "e2e"
+harness = false
 
 [build-dependencies]
 dotenvy = "0.15"

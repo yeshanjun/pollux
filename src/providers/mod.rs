@@ -2,7 +2,10 @@ pub mod antigravity;
 pub mod codex;
 pub mod geminicli;
 pub mod manifest;
+#[cfg(not(feature = "bench"))]
 pub(crate) mod traits;
+#[cfg(feature = "bench")]
+pub mod traits;
 
 mod bootstrap;
 mod policy;

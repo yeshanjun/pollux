@@ -10,3 +10,10 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 ahash = { workspace = true }
 moka = { workspace = true }
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "thoughtsig"
+harness = false

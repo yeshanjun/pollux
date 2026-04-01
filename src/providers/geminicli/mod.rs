@@ -1,8 +1,14 @@
 pub mod client;
 mod context;
+#[cfg(not(feature = "bench"))]
 mod manager;
+#[cfg(feature = "bench")]
+pub mod manager;
 mod model_mask;
+#[cfg(not(feature = "bench"))]
 mod resource;
+#[cfg(feature = "bench")]
+pub mod resource;
 mod thoughtsig;
 mod workers;
 

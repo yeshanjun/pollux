@@ -123,6 +123,11 @@ impl GeminiClient {
                         HeaderValue::from_str(&format!("Bearer {}", assigned.access_token))
                             .expect("invalid fixed auth header value"),
                     );
+                    if let Ok(ua) = HeaderValue::from_str(
+                        &crate::providers::geminicli::geminicli_user_agent(&model),
+                    ) {
+                        headers.insert(reqwest::header::USER_AGENT, ua);
+                    }
 
                     let resp = post_json_with_retry(
                         "GeminiCLI",

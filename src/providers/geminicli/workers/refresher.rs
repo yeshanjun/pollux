@@ -268,7 +268,7 @@ impl Actor for GeminiCliRefresherActor {
     ) -> Result<Self::State, ActorProcessingErr> {
         let mut headers = HeaderMap::new();
         let mut builder = reqwest::Client::builder()
-            .user_agent("geminicli-oauth/1.0".to_string())
+            .user_agent(crate::providers::geminicli::GOOGLE_AUTH_LIB_USER_AGENT)
             .connect_timeout(Duration::from_secs(5))
             .timeout(Duration::from_secs(15));
         if let Some(proxy_url) = cfg.proxy.clone() {

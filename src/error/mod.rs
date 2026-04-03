@@ -6,6 +6,7 @@ mod pollux;
 pub(crate) use codex::CodexError;
 pub use gemini::{
     GeminiCliError, GeminiCliErrorBody, GeminiCliErrorObject, GeminiErrorBody, GeminiErrorObject,
+    RateLimitVariant,
 };
 pub use oauth::OauthError;
 pub use pollux::{ApiErrorBody, ApiErrorObject, PolluxError};

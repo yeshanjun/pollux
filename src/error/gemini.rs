@@ -348,67 +348,81 @@ pub struct GeminiCliErrorObject {
     pub extra: BTreeMap<String, Value>,
 }
 
+/// Variant classification for 429 RESOURCE_EXHAUSTED errors.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RateLimitVariant {
+    QuotaCooldown(u64),
+    CapacityPressure,
+    RiskControl,
+}
+
+impl std::fmt::Display for RateLimitVariant {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::QuotaCooldown(secs) => write!(f, "cooldown({secs}s)"),
+            Self::CapacityPressure => f.write_str("pvp"),
+            Self::RiskControl => f.write_str("risk"),
+        }
+    }
+}
+
 impl GeminiCliErrorBody {
-    pub fn quota_reset_delay(&self) -> Option<u64> {
-        let details = self.inner.details.as_ref()?;
+    /// Classify the 429 `RESOURCE_EXHAUSTED` variant in a single pass over `details`.
+    ///
+    /// Returns one of:
+    /// - [`RateLimitVariant::QuotaCooldown`] — `quotaResetTimeStamp` present,
+    ///   carries the computed seconds until reset (fallback 90 s if the timestamp is in the past).
+    /// - [`RateLimitVariant::CapacityPressure`] — `reason = MODEL_CAPACITY_EXHAUSTED`,
+    ///   upstream-wide capacity shortage, not credential-specific.
+    /// - [`RateLimitVariant::RiskControl`] — no `details` or unrecognized structure,
+    ///   suspected upstream risk-control.
+    pub fn rate_limit_variant(&self) -> RateLimitVariant {
+        let Some(details) = self.inner.details.as_deref() else {
+            return RateLimitVariant::RiskControl;
+        };
+
+        if let Some(variant) = details.iter().find_map(|d| {
+            let ts = d.get("metadata")?.get("quotaResetTimeStamp")?.as_str()?;
+            let secs = DateTime::parse_from_rfc3339(ts)
+                .ok()
+                .map(|dt| (dt.with_timezone(&Utc) - Utc::now()).num_seconds())
+                .filter(|&diff| diff > 0)
+                .map(|diff| diff as u64 + 1)
+                .unwrap_or(90);
+            Some(RateLimitVariant::QuotaCooldown(secs))
+        }) {
+            return variant;
+        }
 
         details
             .iter()
-            .filter_map(|detail| {
-                detail
-                    .get("metadata")
-                    .and_then(|m| m.get("quotaResetTimeStamp"))
-                    .and_then(Value::as_str)
-                    .and_then(|ts| DateTime::parse_from_rfc3339(ts).ok())
-            })
-            .filter_map(|reset_dt| {
-                let reset = reset_dt.with_timezone(&Utc);
-                let now = Utc::now();
-                let diff_secs = (reset - now).num_seconds();
-                (diff_secs > 0).then_some((diff_secs as u64).saturating_add(1))
-            })
-            .next()
-            .or_else(|| {
-                details
-                    .iter()
-                    .any(|detail| {
-                        detail.get("reason").and_then(Value::as_str)
-                            == Some("MODEL_CAPACITY_EXHAUSTED")
-                    })
-                    .then_some(10 * 60)
-            })
+            .find(|d| d.get("reason").and_then(Value::as_str) == Some("MODEL_CAPACITY_EXHAUSTED"))
+            .map(|_| RateLimitVariant::CapacityPressure)
+            .unwrap_or(RateLimitVariant::RiskControl)
     }
 }
 
 impl MappingAction for GeminiCliErrorBody {
     fn try_match_rule(&self, status: StatusCode) -> Option<ActionForError> {
-        match (status, self) {
-            // 401: credential is invalid/expired.
-            (StatusCode::UNAUTHORIZED, body)
-                if body.inner.status.as_deref() == Some("UNAUTHENTICATED") =>
-            {
-                Some(ActionForError::Invalid)
-            }
+        let inner_status = self.inner.status.as_deref().unwrap_or_default();
 
-            // 403: account permission issue.
-            (StatusCode::FORBIDDEN, body)
-                if body.inner.status.as_deref() == Some("PERMISSION_DENIED") =>
-            {
-                Some(ActionForError::Ban)
-            }
+        match (status, inner_status) {
+            (StatusCode::UNAUTHORIZED, "UNAUTHENTICATED") => Some(ActionForError::Invalid),
 
-            // 404: requested model/resource not found.
-            (StatusCode::NOT_FOUND, body) if body.inner.status.as_deref() == Some("NOT_FOUND") => {
-                Some(ActionForError::ModelUnsupported)
-            }
+            (StatusCode::FORBIDDEN, "PERMISSION_DENIED") => Some(ActionForError::Ban),
 
-            // 429: quota/capacity exhausted.
-            (StatusCode::TOO_MANY_REQUESTS, body)
-                if body.inner.status.as_deref() == Some("RESOURCE_EXHAUSTED") =>
-            {
-                Some(ActionForError::RateLimit(Duration::from_secs(
-                    body.quota_reset_delay().unwrap_or(90).max(1),
-                )))
+            (StatusCode::NOT_FOUND, "NOT_FOUND") => Some(ActionForError::ModelUnsupported),
+
+            (StatusCode::TOO_MANY_REQUESTS, "RESOURCE_EXHAUSTED") => {
+                Some(match self.rate_limit_variant() {
+                    RateLimitVariant::QuotaCooldown(secs) => {
+                        ActionForError::RateLimit(Duration::from_secs(secs.max(1)))
+                    }
+                    RateLimitVariant::CapacityPressure => ActionForError::None,
+                    RateLimitVariant::RiskControl => {
+                        ActionForError::RateLimit(Duration::from_secs(30 * 60))
+                    }
+                })
             }
 
             _ => None,
@@ -429,91 +443,110 @@ impl MappingAction for GeminiCliErrorBody {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
 
+    /// Real upstream: quota exhausted with `quotaResetTimeStamp`.
     #[test]
-    fn parse_and_map() {
-        let e429_1 = GeminiCliErrorBody {
-            inner: GeminiCliErrorObject {
-                code: Some(429),
-                message: Some("quota".to_string()),
-                status: Some("RESOURCE_EXHAUSTED".to_string()),
-                details: Some(vec![json!({
-                    "@type": "type.googleapis.com/google.rpc.ErrorInfo",
-                    "reason": "QUOTA_EXHAUSTED",
-                    "domain": "cloudcode-pa.googleapis.com",
-                    "metadata": {
-                        "uiMessage": "true",
-                        "model": "gemini-2.5-pro",
-                        "quotaResetDelay": "5h41m27.587942796s",
-                        "quotaResetTimeStamp": "2999-01-01T00:00:00Z"
-                    }
-                })]),
-                extra: BTreeMap::new(),
-            },
-        };
-        assert_eq!(e429_1.inner.code, Some(429));
-        assert_eq!(e429_1.inner.status.as_deref(), Some("RESOURCE_EXHAUSTED"));
-        assert!(e429_1.inner.details.is_some());
-        assert!(matches!(
-            e429_1.try_match_rule(StatusCode::TOO_MANY_REQUESTS),
-            Some(ActionForError::RateLimit(_))
-        ));
-
-        let e429_2 = GeminiCliErrorBody {
-            inner: GeminiCliErrorObject {
-                code: Some(429),
-                message: Some("No capacity".to_string()),
-                status: Some("RESOURCE_EXHAUSTED".to_string()),
-                details: Some(vec![json!({
-                    "@type": "type.googleapis.com/google.rpc.ErrorInfo",
-                    "domain": "cloudcode-pa.googleapis.com",
-                    "metadata": { "model": "gemini-3-pro-preview" },
-                    "reason": "MODEL_CAPACITY_EXHAUSTED"
-                })]),
-                extra: BTreeMap::new(),
-            },
-        };
-        assert_eq!(e429_2.inner.code, Some(429));
-        assert_eq!(e429_2.inner.status.as_deref(), Some("RESOURCE_EXHAUSTED"));
-        assert!(e429_2.inner.details.is_some());
-        assert_eq!(
-            e429_2.try_match_rule(StatusCode::TOO_MANY_REQUESTS),
-            Some(ActionForError::RateLimit(Duration::from_secs(10 * 60)))
-        );
-
-        let e404_1 = GeminiCliErrorBody {
-            inner: GeminiCliErrorObject {
-                code: Some(404),
-                message: Some("Requested entity was not found.".to_string()),
-                status: Some("NOT_FOUND".to_string()),
-                details: None,
-                extra: BTreeMap::new(),
-            },
-        };
-        assert_eq!(e404_1.inner.code, Some(404));
-        assert_eq!(e404_1.inner.status.as_deref(), Some("NOT_FOUND"));
-        assert!(matches!(
-            e404_1.try_match_rule(StatusCode::NOT_FOUND),
-            Some(ActionForError::ModelUnsupported)
-        ));
-    }
-
-    #[test]
-    fn quota_reset_delay_uses_timestamp() {
-        // Use far-future timestamp to keep the test stable regardless of runtime clock.
+    fn rate_limit_429_quota_cooldown() {
+        // Use far-future timestamp to keep the test stable.
         let raw = r#"{
             "error": {
                 "code": 429,
-                "message": "quota",
+                "message": "You have exhausted your capacity on this model. Your quota will reset after 11h16m14s.",
                 "status": "RESOURCE_EXHAUSTED",
                 "details": [
-                    { "metadata": { "quotaResetTimeStamp": "2999-01-01T00:00:00Z" } }
+                    {
+                        "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+                        "reason": "QUOTA_EXHAUSTED",
+                        "domain": "cloudcode-pa.googleapis.com",
+                        "metadata": {
+                            "model": "gemini-3.1-pro-preview",
+                            "quotaResetDelay": "11h16m14.149781566s",
+                            "quotaResetTimeStamp": "2999-01-01T00:00:00Z",
+                            "uiMessage": "true"
+                        }
+                    },
+                    {
+                        "@type": "type.googleapis.com/google.rpc.RetryInfo",
+                        "retryDelay": "40574.149781566s"
+                    }
                 ]
             }
         }"#;
 
-        let parsed = serde_json::from_str::<GeminiCliErrorBody>(raw).expect("parse sample");
-        assert!(parsed.quota_reset_delay().is_some());
+        let parsed: GeminiCliErrorBody = serde_json::from_str(raw).expect("parse");
+        match parsed.rate_limit_variant() {
+            RateLimitVariant::QuotaCooldown(secs) => assert!(secs > 0),
+            other => panic!("expected QuotaCooldown, got {other:?}"),
+        }
+        assert!(matches!(
+            parsed.try_match_rule(StatusCode::TOO_MANY_REQUESTS),
+            Some(ActionForError::RateLimit(_))
+        ));
+    }
+
+    /// Real upstream: model capacity exhausted (upstream-wide, not credential-specific).
+    #[test]
+    fn rate_limit_429_capacity_pressure() {
+        let raw = r#"{
+            "error": {
+                "code": 429,
+                "message": "No capacity available for model gemini-3.1-pro-preview on the server",
+                "status": "RESOURCE_EXHAUSTED",
+                "details": [
+                    {
+                        "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+                        "domain": "cloudcode-pa.googleapis.com",
+                        "metadata": { "model": "gemini-3.1-pro-preview" },
+                        "reason": "MODEL_CAPACITY_EXHAUSTED"
+                    }
+                ]
+            }
+        }"#;
+
+        let parsed: GeminiCliErrorBody = serde_json::from_str(raw).expect("parse");
+        assert_eq!(
+            parsed.rate_limit_variant(),
+            RateLimitVariant::CapacityPressure
+        );
+        assert_eq!(
+            parsed.try_match_rule(StatusCode::TOO_MANY_REQUESTS),
+            Some(ActionForError::None)
+        );
+    }
+
+    /// Real upstream: bare 429 with no details — suspected risk-control.
+    #[test]
+    fn rate_limit_429_risk_control() {
+        let raw = r#"{
+            "error": {
+                "code": 429,
+                "message": "Resource has been exhausted (e.g. check quota).",
+                "status": "RESOURCE_EXHAUSTED"
+            }
+        }"#;
+
+        let parsed: GeminiCliErrorBody = serde_json::from_str(raw).expect("parse");
+        assert_eq!(parsed.rate_limit_variant(), RateLimitVariant::RiskControl);
+        assert_eq!(
+            parsed.try_match_rule(StatusCode::TOO_MANY_REQUESTS),
+            Some(ActionForError::RateLimit(Duration::from_secs(30 * 60)))
+        );
+    }
+
+    #[test]
+    fn map_404_not_found() {
+        let raw = r#"{
+            "error": {
+                "code": 404,
+                "message": "Requested entity was not found.",
+                "status": "NOT_FOUND"
+            }
+        }"#;
+
+        let parsed: GeminiCliErrorBody = serde_json::from_str(raw).expect("parse");
+        assert_eq!(
+            parsed.try_match_rule(StatusCode::NOT_FOUND),
+            Some(ActionForError::ModelUnsupported)
+        );
     }
 }

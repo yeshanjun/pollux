@@ -173,12 +173,18 @@ impl GeminiClient {
                         }
 
                         match &final_error {
-                            GeminiCliError::UpstreamMappedError { status, .. } => {
+                            GeminiCliError::UpstreamMappedError { status, body } => {
+                                let variant = if status.as_u16() == 429 {
+                                    Some(body.rate_limit_variant())
+                                } else {
+                                    None
+                                };
                                 warn!(
                                     lease_id = assigned.id,
                                     model = %model,
                                     status = %status,
                                     action = ?action,
+                                    variant = variant.map(|v| v.to_string()).as_deref(),
                                     "[GeminiCli] Upstream mapped error"
                                 );
                             }

@@ -350,10 +350,10 @@ impl CodexActor {
         }
 
         if let Some(assigned) = assignment.assigned {
-            if let Some(rk) = route_key {
-                if !assignment.route_hit {
-                    state.router.insert(rk, model_mask, assigned.id);
-                }
+            if let Some(rk) = route_key
+                && !assignment.route_hit
+            {
+                state.router.insert(rk, model_mask, assigned.id);
             }
 
             let s = state.manager.stats(model_mask);

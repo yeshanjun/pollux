@@ -63,6 +63,7 @@ impl CodexClient {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn call_codex(
         &self,
         handle: &CodexActorHandle,

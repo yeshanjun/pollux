@@ -331,6 +331,7 @@ impl GeminiCliActor {
         model_mask: u64,
     ) {
         let assignment = state.manager.get_assigned(model_mask);
+        let stats = &assignment.stats;
 
         if !assignment.refresh_ids.is_empty() {
             self.handle_report_invalid(myself, state, assignment.refresh_ids)
@@ -339,22 +340,32 @@ impl GeminiCliActor {
 
         if let Some(assigned) = assignment.assigned {
             info!(
-                "Get credential: ID: {}, Project: {}, model_mask=0x{:016x}, queue_len={}",
-                assigned.id,
-                assigned.project_id,
-                model_mask,
-                state.manager.queue_len(model_mask)
+                id = assigned.id,
+                project = %assigned.project_id,
+                model_mask = format_args!("0x{:016x}", model_mask),
+                queue = stats.queue_len,
+                total = stats.total_creds,
+                cooling = stats.cooldowns,
+                refreshing = stats.refreshing,
+                skipped.cooling = stats.skipped_cooling,
+                skipped.refreshing = stats.skipped_refreshing,
+                skipped.expired = stats.skipped_expired,
+                "Lease assigned"
             );
             let _ = reply_port.send(Some(assigned));
             return;
         }
 
         warn!(
-            "No credential available for model_mask=0x{:016x}, queue_len={}, cooldowns={}, refreshing={}",
-            model_mask,
-            state.manager.queue_len(model_mask),
-            state.manager.cooldown_len(),
-            state.manager.refreshing_len()
+            model_mask = format_args!("0x{:016x}", model_mask),
+            queue = stats.queue_len,
+            total = stats.total_creds,
+            cooling = stats.cooldowns,
+            refreshing = stats.refreshing,
+            skipped.cooling = stats.skipped_cooling,
+            skipped.refreshing = stats.skipped_refreshing,
+            skipped.expired = stats.skipped_expired,
+            "No credential available"
         );
         let _ = reply_port.send(None);
     }

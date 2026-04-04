@@ -6,6 +6,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use chrono::{DateTime, Utc};
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -372,7 +373,8 @@ impl GeminiCliErrorBody {
     /// Returns one of:
     /// - [`RateLimitVariant::QuotaCooldown`] — `quotaResetTimeStamp` present,
     ///   carries the computed seconds until reset (fallback 90 s if the timestamp is in the past).
-    /// - [`RateLimitVariant::CapacityPressure`] — `reason = MODEL_CAPACITY_EXHAUSTED`,
+    /// - [`RateLimitVariant::CapacityPressure`] — `reason = MODEL_CAPACITY_EXHAUSTED`
+    ///   or `RATE_LIMIT_EXCEEDED` and no timestamp;
     ///   upstream-wide capacity shortage, not credential-specific.
     /// - [`RateLimitVariant::RiskControl`] — no `details` or unrecognized structure,
     ///   suspected upstream risk-control.
@@ -396,7 +398,12 @@ impl GeminiCliErrorBody {
 
         details
             .iter()
-            .find(|d| d.get("reason").and_then(Value::as_str) == Some("MODEL_CAPACITY_EXHAUSTED"))
+            .find(|d| {
+                matches!(
+                    d.get("reason").and_then(Value::as_str),
+                    Some("MODEL_CAPACITY_EXHAUSTED" | "RATE_LIMIT_EXCEEDED")
+                )
+            })
             .map(|_| RateLimitVariant::CapacityPressure)
             .unwrap_or(RateLimitVariant::RiskControl)
     }
@@ -420,7 +427,8 @@ impl MappingAction for GeminiCliErrorBody {
                     }
                     RateLimitVariant::CapacityPressure => ActionForError::None,
                     RateLimitVariant::RiskControl => {
-                        ActionForError::RateLimit(Duration::from_secs(30 * 60))
+                        let secs = rand::rng().random_range(45 * 60..=60 * 60);
+                        ActionForError::RateLimit(Duration::from_secs(secs))
                     }
                 })
             }
@@ -527,9 +535,54 @@ mod tests {
 
         let parsed: GeminiCliErrorBody = serde_json::from_str(raw).expect("parse");
         assert_eq!(parsed.rate_limit_variant(), RateLimitVariant::RiskControl);
+        let action = parsed.try_match_rule(StatusCode::TOO_MANY_REQUESTS);
+        match action {
+            Some(ActionForError::RateLimit(d)) => {
+                assert!(
+                    d >= Duration::from_secs(45 * 60) && d <= Duration::from_secs(60 * 60),
+                    "expected 45–60 min, got {d:?}"
+                );
+            }
+            other => panic!("expected RateLimit, got {other:?}"),
+        }
+    }
+
+    /// Real upstream: RATE_LIMIT_EXCEEDED with quotaResetDelay=0s and no timestamp —
+    /// upstream capacity shortage, same as MODEL_CAPACITY_EXHAUSTED.
+    #[test]
+    fn rate_limit_429_capacity_pressure_zero_delay() {
+        let raw = r#"{
+            "error": {
+                "code": 429,
+                "message": "You have exhausted your capacity on this model.",
+                "status": "RESOURCE_EXHAUSTED",
+                "details": [
+                    {
+                        "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+                        "domain": "cloudcode-pa.googleapis.com",
+                        "metadata": {
+                            "model": "gemini-2.5-pro",
+                            "quotaResetDelay": "0s",
+                            "uiMessage": "true"
+                        },
+                        "reason": "RATE_LIMIT_EXCEEDED"
+                    },
+                    {
+                        "@type": "type.googleapis.com/google.rpc.RetryInfo",
+                        "retryDelay": "0s"
+                    }
+                ]
+            }
+        }"#;
+
+        let parsed: GeminiCliErrorBody = serde_json::from_str(raw).expect("parse");
+        assert_eq!(
+            parsed.rate_limit_variant(),
+            RateLimitVariant::CapacityPressure
+        );
         assert_eq!(
             parsed.try_match_rule(StatusCode::TOO_MANY_REQUESTS),
-            Some(ActionForError::RateLimit(Duration::from_secs(30 * 60)))
+            Some(ActionForError::None)
         );
     }
 

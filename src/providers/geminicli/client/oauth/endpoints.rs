@@ -14,7 +14,7 @@ use oauth2::{
     },
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::sync::LazyLock;
 use tracing::info;
 
@@ -26,9 +26,11 @@ const GCLI_CLIENT_ID: &str =
     "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com";
 const GCLI_CLIENT_SECRET: &str = "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";
 
+/// Client metadata sent with loadCodeAssist / onboardUser requests,
+/// matching the original Gemini CLI's `coreClientMetadata` shape.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct OnboardMetadata {
+struct ClientMetadata {
     #[serde(default)]
     ide_type: String,
     platform: String,
@@ -37,7 +39,7 @@ struct OnboardMetadata {
     duet_project: Option<String>,
 }
 
-impl Default for OnboardMetadata {
+impl Default for ClientMetadata {
     fn default() -> Self {
         Self {
             ide_type: "IDE_UNSPECIFIED".to_string(),
@@ -50,12 +52,20 @@ impl Default for OnboardMetadata {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct OnboardRequest {
+struct LoadCodeAssistRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cloudaicompanion_project: Option<String>,
+    metadata: ClientMetadata,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OnboardUserRequest {
     tier_id: UserTier,
     #[serde(skip_serializing_if = "Option::is_none")]
     cloudaicompanion_project: Option<String>,
     #[serde(default)]
-    metadata: OnboardMetadata,
+    metadata: ClientMetadata,
 }
 
 pub(crate) static OAUTH_CLIENT: LazyLock<GoogleOauth2Client> =
@@ -114,10 +124,14 @@ impl GoogleOauthEndpoints {
         access_token: impl AsRef<str>,
         http_client: reqwest::Client,
     ) -> Result<Value, OauthError> {
+        let body = LoadCodeAssistRequest {
+            cloudaicompanion_project: None,
+            metadata: ClientMetadata::default(),
+        };
         let resp = http_client
             .post(LOAD_CODE_ASSIST_URL)
             .bearer_auth(access_token.as_ref())
-            .json(&json!({}))
+            .json(&body)
             .send()
             .await?;
 
@@ -136,10 +150,10 @@ impl GoogleOauthEndpoints {
         cloudaicompanion_project: Option<String>,
         http_client: reqwest::Client,
     ) -> Result<Value, OauthError> {
-        let request = OnboardRequest {
+        let request = OnboardUserRequest {
             tier_id: tier,
             cloudaicompanion_project: cloudaicompanion_project.clone(),
-            metadata: OnboardMetadata {
+            metadata: ClientMetadata {
                 duet_project: cloudaicompanion_project,
                 ..Default::default()
             },

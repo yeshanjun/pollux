@@ -6,6 +6,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use chrono::{DateTime, Utc};
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -426,7 +427,8 @@ impl MappingAction for GeminiCliErrorBody {
                     }
                     RateLimitVariant::CapacityPressure => ActionForError::None,
                     RateLimitVariant::RiskControl => {
-                        ActionForError::RateLimit(Duration::from_secs(30 * 60))
+                        let secs = rand::rng().random_range(45 * 60..=60 * 60);
+                        ActionForError::RateLimit(Duration::from_secs(secs))
                     }
                 })
             }
@@ -533,10 +535,16 @@ mod tests {
 
         let parsed: GeminiCliErrorBody = serde_json::from_str(raw).expect("parse");
         assert_eq!(parsed.rate_limit_variant(), RateLimitVariant::RiskControl);
-        assert_eq!(
-            parsed.try_match_rule(StatusCode::TOO_MANY_REQUESTS),
-            Some(ActionForError::RateLimit(Duration::from_secs(30 * 60)))
-        );
+        let action = parsed.try_match_rule(StatusCode::TOO_MANY_REQUESTS);
+        match action {
+            Some(ActionForError::RateLimit(d)) => {
+                assert!(
+                    d >= Duration::from_secs(45 * 60) && d <= Duration::from_secs(60 * 60),
+                    "expected 45–60 min, got {d:?}"
+                );
+            }
+            other => panic!("expected RateLimit, got {other:?}"),
+        }
     }
 
     /// Real upstream: RATE_LIMIT_EXCEEDED with quotaResetDelay=0s and no timestamp —

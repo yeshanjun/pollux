@@ -4,8 +4,40 @@ use crate::providers::manifest::GeminiCliLease;
 use std::{
     cmp::Reverse,
     collections::{BinaryHeap, HashMap, HashSet, VecDeque},
+    fmt,
     time::{Duration, Instant},
 };
+
+/// Result of evaluating a single credential candidate for a given model.
+#[derive(Debug)]
+pub(crate) enum LeaseStatus {
+    /// Credential is usable — here is the lease.
+    Ready(GeminiCliLease),
+    /// Credential has expired and needs refreshing.
+    Expired,
+    /// Credential is in a rate-limit cooldown for this model.
+    Cooling,
+    /// Credential is already being refreshed.
+    Refreshing,
+    /// Credential does not support the requested model.
+    Unsupported,
+    /// Credential ID not found in the manager.
+    Missing,
+}
+
+impl fmt::Display for LeaseStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            LeaseStatus::Ready(lease) => write!(f, "ready(project={})", lease.project_id),
+            LeaseStatus::Expired => f.write_str("expired"),
+            LeaseStatus::Cooling => f.write_str("cooling"),
+            LeaseStatus::Refreshing => f.write_str("refreshing"),
+            LeaseStatus::Unsupported => f.write_str("unsupported"),
+            LeaseStatus::Missing => f.write_str("missing"),
+        }
+    }
+}
+
 /// Runtime credential = base data + dynamic capabilities.
 #[derive(Debug, Clone)]
 pub struct RuntimeCredential {
@@ -36,10 +68,23 @@ impl RuntimeCredential {
 pub type CredentialId = u64;
 pub type ModelIndex = usize;
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SchedulerStats {
+    pub total_creds: usize,
+    pub queue_len: usize,
+    pub refreshing: usize,
+    pub cooldowns: usize,
+    pub skipped_cooling: usize,
+    pub skipped_refreshing: usize,
+    pub skipped_unsupported: usize,
+    pub skipped_expired: usize,
+}
+
 #[derive(Debug, Default)]
 pub struct AssignmentResult {
     pub assigned: Option<GeminiCliLease>,
     pub refresh_ids: Vec<CredentialId>,
+    pub stats: SchedulerStats,
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -169,41 +214,68 @@ impl CredentialManager {
             return result;
         };
 
+        result.stats = SchedulerStats {
+            total_creds: self.creds.len(),
+            queue_len: self.queues.get(model_index).map_or(0, |q| q.len()),
+            refreshing: self.refreshing.len(),
+            cooldowns: self.cooldown_map.len(),
+            ..Default::default()
+        };
+
         while let Some(id) = self.queues.get_mut(model_index).and_then(|q| q.pop_front()) {
-            let Some(cred) = self.creds.get(&id) else {
-                continue;
-            };
-
-            if !cred.caps.supports(model_index) {
-                continue;
+            let status = self.check_lease(id, model_index);
+            match status {
+                LeaseStatus::Ready(lease) => {
+                    if let Some(queue) = self.queues.get_mut(model_index) {
+                        queue.push_back(id);
+                    }
+                    result.assigned = Some(lease);
+                    return result;
+                }
+                LeaseStatus::Expired => {
+                    result.refresh_ids.push(id);
+                    result.stats.skipped_expired += 1;
+                }
+                LeaseStatus::Cooling => result.stats.skipped_cooling += 1,
+                LeaseStatus::Refreshing => result.stats.skipped_refreshing += 1,
+                LeaseStatus::Unsupported => result.stats.skipped_unsupported += 1,
+                LeaseStatus::Missing => {}
             }
-
-            if self.refreshing.contains(&id) || self.is_model_cooling(id, model_index) {
-                continue;
-            }
-
-            let Some(token) = cred
-                .inner
-                .access_token()
-                .filter(|_| !cred.is_expired())
-                .map(str::to_owned)
-            else {
-                result.refresh_ids.push(id);
-                continue;
-            };
-
-            if let Some(queue) = self.queues.get_mut(model_index) {
-                queue.push_back(id);
-            }
-
-            result.assigned = Some(GeminiCliLease {
-                id,
-                project_id: cred.inner.project_id().to_string(),
-                access_token: token,
-            });
-            return result;
         }
         result
+    }
+
+    /// Single evaluation path for any credential candidate against a model index.
+    fn check_lease(&self, id: CredentialId, model_index: ModelIndex) -> LeaseStatus {
+        let Some(cred) = self.creds.get(&id) else {
+            return LeaseStatus::Missing;
+        };
+
+        if !cred.caps.supports(model_index) {
+            return LeaseStatus::Unsupported;
+        }
+
+        if self.refreshing.contains(&id) {
+            return LeaseStatus::Refreshing;
+        }
+
+        if self.is_model_cooling(id, model_index) {
+            return LeaseStatus::Cooling;
+        }
+
+        if cred.is_expired() {
+            return LeaseStatus::Expired;
+        }
+
+        let Some(token) = cred.inner.access_token().map(str::to_owned) else {
+            return LeaseStatus::Expired;
+        };
+
+        LeaseStatus::Ready(GeminiCliLease {
+            id,
+            project_id: cred.inner.project_id().to_string(),
+            access_token: token,
+        })
     }
 
     fn process_waiting_room(&mut self) {
@@ -227,26 +299,12 @@ impl CredentialManager {
         }
     }
 
-    pub fn queue_len(&self, model_mask: u64) -> usize {
-        self.index_from_mask(model_mask)
-            .and_then(|model_index| self.queues.get(model_index).map(|q| q.len()))
-            .unwrap_or(0)
-    }
-
     pub fn total_creds(&self) -> usize {
         self.creds.len()
     }
 
-    pub fn refreshing_len(&self) -> usize {
-        self.refreshing.len()
-    }
-
     pub fn is_refreshing(&self, id: CredentialId) -> bool {
         self.refreshing.contains(&id)
-    }
-
-    pub fn cooldown_len(&self) -> usize {
-        self.cooldown_map.len()
     }
 
     fn is_model_cooling(&self, id: CredentialId, model_index: ModelIndex) -> bool {

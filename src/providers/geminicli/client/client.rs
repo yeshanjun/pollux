@@ -87,7 +87,7 @@ impl GeminiClient {
                         .ok_or(GeminiCliError::NoAvailableCredential)?;
 
                     let actor_took = start.elapsed();
-                    info!(
+                    debug!(
                         channel = "geminicli",
                         lease.id = assigned.id,
                         lease.waited_us = actor_took.as_micros() as u64,

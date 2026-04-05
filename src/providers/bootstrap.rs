@@ -49,11 +49,11 @@ impl Providers {
         );
 
         info!(
+            codex_api_url = %codex_cfg.api_url,
             codex_proxy = %codex_cfg.proxy.as_ref().map(|u| u.as_str()).unwrap_or("<none>"),
             codex_enable_multiplexing = codex_cfg.enable_multiplexing,
             codex_retry_max_times = codex_cfg.retry_max_times,
             codex_oauth_tps = codex_cfg.oauth_tps,
-            codex_responses_url = %crate::providers::codex::CODEX_RESPONSES_URL.as_str(),
             codex_model_list = ?codex_cfg.model_list,
             "Codex config (effective)"
         );

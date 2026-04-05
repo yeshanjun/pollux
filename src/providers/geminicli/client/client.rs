@@ -25,6 +25,7 @@ impl GeminiClient {
             .with_max_delay(Duration::ZERO)
             .with_max_times(retry_max_times);
         let endpoints = Self::endpoints_for_base(base_url);
+        info!(endpoint = %endpoints.select(false), "GeminiClient initialized");
 
         Self {
             client,
@@ -36,9 +37,9 @@ impl GeminiClient {
     fn endpoints_for_base(base: Url) -> ProviderEndpoints {
         ProviderEndpoints::new(
             base,
-            "/v1internal:streamGenerateContent",
+            "./v1internal:streamGenerateContent",
             Some("alt=sse"),
-            "/v1internal:generateContent",
+            "./v1internal:generateContent",
             None,
         )
     }

@@ -71,9 +71,9 @@ impl AntigravityClient {
     fn endpoints_for_base(base: Url) -> ProviderEndpoints {
         ProviderEndpoints::new(
             base,
-            "/v1internal:streamGenerateContent",
+            "./v1internal:streamGenerateContent",
             Some("alt=sse"),
-            "/v1internal:generateContent",
+            "./v1internal:generateContent",
             None,
         )
     }

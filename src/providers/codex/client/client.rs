@@ -31,6 +31,7 @@ impl CodexClient {
             .with_max_delay(Duration::ZERO)
             .with_max_times(retry_max_times);
         let endpoints = Self::endpoints_for_base(base_url);
+        info!(endpoint = %endpoints.select(false), "CodexClient initialized");
 
         Self {
             client,
@@ -42,9 +43,9 @@ impl CodexClient {
     fn endpoints_for_base(base: Url) -> ProviderEndpoints {
         ProviderEndpoints::new(
             base,
-            "/backend-api/codex/responses",
+            "./backend-api/codex/responses",
             None,
-            "/backend-api/codex/responses",
+            "./backend-api/codex/responses",
             None,
         )
     }

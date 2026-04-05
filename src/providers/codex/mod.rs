@@ -8,8 +8,6 @@ mod resource;
 mod submission;
 mod workers;
 
-use std::sync::LazyLock;
-use url::Url;
 use workers::{
     CodexOauthWorkerHandle, CredentialJob, CredentialJobKind, CredentialProcessError,
     CredentialProcessResult,
@@ -19,11 +17,6 @@ pub use manager::CodexActorHandle;
 pub(in crate::providers) use manager::spawn;
 pub(crate) use model_mask::{SUPPORTED_MODEL_MASK, SUPPORTED_MODEL_NAMES, model_mask};
 pub(crate) use submission::CodexRefreshTokenSeed;
-
-pub(crate) static CODEX_RESPONSES_URL: LazyLock<Url> = LazyLock::new(|| {
-    Url::parse("https://chatgpt.com/backend-api/codex/responses")
-        .expect("invalid fixed Codex responses URL")
-});
 
 /// Hard-coded Codex-style User-Agent string kept as a fallback.
 ///

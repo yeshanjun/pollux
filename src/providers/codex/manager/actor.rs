@@ -216,7 +216,6 @@ impl Actor for CodexActor {
             enable_multiplexing = cfg.enable_multiplexing,
             retry_max_times = cfg.retry_max_times,
             oauth_tps = cfg.oauth_tps,
-            responses_url = %crate::providers::codex::CODEX_RESPONSES_URL.as_str(),
             "CodexActor runtime config loaded"
         );
 

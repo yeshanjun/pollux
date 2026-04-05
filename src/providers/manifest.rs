@@ -1,5 +1,8 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::fmt;
+
+use crate::providers::lease_status::LeaseLabel;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -59,6 +62,17 @@ pub struct GeminiCliLease {
     pub id: u64,
     pub access_token: String,
     pub project_id: String,
+    pub email: Option<String>,
+}
+
+impl LeaseLabel for GeminiCliLease {
+    fn fmt_label(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "id={}, project={}", self.id, self.project_id)?;
+        if let Some(email) = self.email.as_deref() {
+            write!(f, ", email={}", email)?;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -66,6 +80,17 @@ pub struct CodexLease {
     pub id: u64,
     pub access_token: String,
     pub account_id: String,
+    pub email: Option<String>,
+}
+
+impl LeaseLabel for CodexLease {
+    fn fmt_label(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "id={}, account={}", self.id, self.account_id)?;
+        if let Some(email) = self.email.as_deref() {
+            write!(f, ", email={}", email)?;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -73,6 +98,12 @@ pub struct AntigravityLease {
     pub id: u64,
     pub access_token: String,
     pub project_id: String,
+}
+
+impl LeaseLabel for AntigravityLease {
+    fn fmt_label(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "project={}", self.project_id)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -330,7 +330,9 @@ impl GeminiCliActor {
         reply_port: RpcReplyPort<Option<GeminiCliLease>>,
         model_mask: u64,
     ) {
+        let start = std::time::Instant::now();
         let assignment = state.manager.get_assigned(model_mask);
+        let sched_us = start.elapsed().as_micros() as u64;
         let stats = &assignment.stats;
 
         if !assignment.refresh_ids.is_empty() {
@@ -340,17 +342,16 @@ impl GeminiCliActor {
 
         if let Some(assigned) = assignment.assigned {
             info!(
+                sched_us,
                 id = assigned.id,
                 project = %assigned.project_id,
+                email = %assigned.email.as_deref().unwrap_or("-"),
                 model_mask = format_args!("0x{:016x}", model_mask),
                 queue = stats.queue_len,
                 total = stats.total_creds,
                 cooling = stats.cooldowns,
                 refreshing = stats.refreshing,
-                skipped.cooling = stats.skipped_cooling,
-                skipped.refreshing = stats.skipped_refreshing,
-                skipped.expired = stats.skipped_expired,
-                "Lease assigned"
+                "[GeminiCli] Credential assigned"
             );
             let _ = reply_port.send(Some(assigned));
             return;
@@ -590,7 +591,7 @@ impl GeminiCliActor {
                         tokio::spawn(async move {
                             let patch = GeminiCliPatch {
                                 email: cred.email().map(ToString::to_string),
-                                access_token: cred.access_token().map(ToString::to_string),
+                                access_token: Some(cred.access_token().to_string()),
                                 expiry: Some(cred.expiry()),
                                 ..Default::default()
                             };

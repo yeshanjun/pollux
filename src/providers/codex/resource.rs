@@ -86,6 +86,7 @@ impl CodexResource {
             id,
             access_token: self.access_token,
             account_id: self.account_id,
+            email: self.email,
         }
     }
 

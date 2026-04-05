@@ -86,18 +86,13 @@ impl GeminiClient {
                         .await?
                         .ok_or(GeminiCliError::NoAvailableCredential)?;
 
-                    let actor_took = start.elapsed();
-                    debug!(
-                        channel = "geminicli",
-                        lease.id = assigned.id,
-                        lease.waited_us = actor_took.as_micros() as u64,
-                        req.model = %model,
-                        req.stream = stream,
-
-                        "[GeminiCli] [ID: {}] [{:?}] Post responses -> {}",
-                        assigned.id,
-                        actor_took,
-                        model.as_str()
+                    let waited_us = start.elapsed().as_micros() as u64;
+                    info!(
+                        waited_us,
+                        id = assigned.id,
+                        model = %model,
+                        stream,
+                        "[GeminiCli] Lease acquired"
                     );
 
                     let payload = GeminiCliRequestMeta {

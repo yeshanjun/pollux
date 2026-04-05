@@ -250,6 +250,7 @@ mod tests {
             id: 1,
             access_token: "at-test".to_string(),
             account_id: "acct-test".to_string(),
+            email: None,
         };
 
         let map = CodexRequestHeaders::build(&inbound, &lease).into_header_map();

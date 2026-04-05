@@ -1,42 +1,13 @@
 use crate::model_catalog::ModelCapabilities;
 use crate::providers::geminicli::resource::GeminiCliResource;
 use crate::providers::manifest::GeminiCliLease;
+
+type LeaseStatus = crate::providers::lease_status::LeaseStatus<GeminiCliLease>;
 use std::{
     cmp::Reverse,
     collections::{BinaryHeap, HashMap, HashSet, VecDeque},
-    fmt,
     time::{Duration, Instant},
 };
-
-/// Result of evaluating a single credential candidate for a given model.
-#[derive(Debug)]
-pub(crate) enum LeaseStatus {
-    /// Credential is usable — here is the lease.
-    Ready(GeminiCliLease),
-    /// Credential has expired and needs refreshing.
-    Expired,
-    /// Credential is in a rate-limit cooldown for this model.
-    Cooling,
-    /// Credential is already being refreshed.
-    Refreshing,
-    /// Credential does not support the requested model.
-    Unsupported,
-    /// Credential ID not found in the manager.
-    Missing,
-}
-
-impl fmt::Display for LeaseStatus {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            LeaseStatus::Ready(lease) => write!(f, "ready(project={})", lease.project_id),
-            LeaseStatus::Expired => f.write_str("expired"),
-            LeaseStatus::Cooling => f.write_str("cooling"),
-            LeaseStatus::Refreshing => f.write_str("refreshing"),
-            LeaseStatus::Unsupported => f.write_str("unsupported"),
-            LeaseStatus::Missing => f.write_str("missing"),
-        }
-    }
-}
 
 /// Runtime credential = base data + dynamic capabilities.
 #[derive(Debug, Clone)]
@@ -267,14 +238,11 @@ impl CredentialManager {
             return LeaseStatus::Expired;
         }
 
-        let Some(token) = cred.inner.access_token().map(str::to_owned) else {
-            return LeaseStatus::Expired;
-        };
-
         LeaseStatus::Ready(GeminiCliLease {
             id,
             project_id: cred.inner.project_id().to_string(),
-            access_token: token,
+            access_token: cred.inner.access_token().to_owned(),
+            email: cred.inner.email().map(str::to_owned),
         })
     }
 

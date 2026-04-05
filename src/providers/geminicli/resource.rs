@@ -1,6 +1,6 @@
 use crate::db::{DbGeminiCliResource, GeminiCliCreate};
 use crate::error::PolluxError;
-use crate::providers::manifest::GeminiCliProfile;
+use crate::providers::manifest::{GeminiCliLease, GeminiCliProfile};
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use tracing::debug;
@@ -11,7 +11,7 @@ pub(super) struct GeminiCliResource {
     sub: String,
     project_id: String,
     refresh_token: String,
-    access_token: Option<String>,
+    access_token: String,
     expiry: DateTime<Utc>,
 }
 
@@ -22,7 +22,7 @@ impl Default for GeminiCliResource {
             sub: String::new(),
             project_id: String::new(),
             refresh_token: String::new(),
-            access_token: None,
+            access_token: String::new(),
             expiry: Utc::now(),
         }
     }
@@ -43,7 +43,6 @@ impl GeminiCliResource {
         &self.sub
     }
 
-    #[allow(dead_code)]
     pub fn email(&self) -> Option<&str> {
         self.email.as_deref()
     }
@@ -61,8 +60,18 @@ impl GeminiCliResource {
         &self.refresh_token
     }
 
-    pub fn access_token(&self) -> Option<&str> {
-        self.access_token.as_deref()
+    pub fn access_token(&self) -> &str {
+        &self.access_token
+    }
+
+    #[allow(dead_code)]
+    pub fn into_lease(self, id: u64) -> GeminiCliLease {
+        GeminiCliLease {
+            id,
+            project_id: self.project_id,
+            access_token: self.access_token,
+            email: self.email,
+        }
     }
 
     #[allow(dead_code)]
@@ -109,7 +118,7 @@ impl GeminiCliResource {
         set_plain!(sub);
         set_plain!(project_id);
         set_plain!(refresh_token);
-        set_opt!(access_token);
+        set_plain!(access_token);
 
         if let Some(secs) = patch.expires_in {
             self.expiry = Utc::now() + Duration::seconds(secs);
@@ -139,7 +148,7 @@ impl From<GeminiCliProfile> for GeminiCliResource {
             sub: String::new(),
             project_id: profile.project_id,
             refresh_token: profile.refresh_token,
-            access_token: profile.access_token,
+            access_token: profile.access_token.unwrap_or_default(),
             ..Default::default()
         }
     }
@@ -152,7 +161,7 @@ impl From<DbGeminiCliResource> for GeminiCliResource {
             sub: d.sub,
             project_id: d.project_id,
             refresh_token: d.refresh_token,
-            access_token: d.access_token,
+            access_token: d.access_token.unwrap_or_default(),
             expiry: d.expiry,
         }
     }
@@ -165,7 +174,7 @@ impl From<GeminiCliResource> for GeminiCliCreate {
             sub: cred.sub,
             project_id: cred.project_id,
             refresh_token: cred.refresh_token,
-            access_token: cred.access_token,
+            access_token: Some(cred.access_token),
             expiry: cred.expiry,
         }
     }

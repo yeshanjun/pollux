@@ -43,7 +43,7 @@ impl RefreshJob {
                 }
             }
             TaskType::Onboard => {
-                if (self.cred.access_token().is_none()
+                if (self.cred.access_token().is_empty()
                     || self.cred.is_expired()
                     || self.cred.sub().is_empty())
                     && let Err(e) =
@@ -65,12 +65,13 @@ impl RefreshJob {
                     });
                 }
 
-                let Some(token_str) = self.cred.access_token() else {
+                let token_str = self.cred.access_token();
+                if token_str.is_empty() {
                     return Err(RefreshError {
                         original_job: self,
                         error: PolluxError::MissingAccessToken,
                     });
-                };
+                }
 
                 match ensure_companion_project(token_str, client).await {
                     Ok(project_id) => {
@@ -479,7 +480,7 @@ mod tests {
         apply_refresh_payload(&mut cred, payload, true).expect("refresh payload applied");
 
         assert!(!cred.is_expired());
-        assert_eq!(cred.access_token(), Some(access_token.as_str()));
+        assert_eq!(cred.access_token(), access_token.as_str());
         assert_eq!(cred.email(), Some(email));
         assert_eq!(cred.sub(), sub);
         assert_eq!(cred.project_id(), "project-a");
@@ -503,6 +504,6 @@ mod tests {
         apply_refresh_payload(&mut cred, payload, false).expect("refresh payload applied");
 
         assert_eq!(cred.email(), Some("old@example.com"));
-        assert_eq!(cred.access_token(), Some("new-token"));
+        assert_eq!(cred.access_token(), "new-token");
     }
 }

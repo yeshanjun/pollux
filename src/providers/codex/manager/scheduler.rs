@@ -1,7 +1,6 @@
 use std::{
     cmp::Reverse,
     collections::{BinaryHeap, HashMap, HashSet, VecDeque},
-    fmt,
     time::{Duration, Instant},
 };
 use tracing::warn;
@@ -10,35 +9,7 @@ use crate::model_catalog::ModelCapabilities;
 use crate::providers::codex::resource::CodexResource;
 use crate::providers::manifest::CodexLease;
 
-/// Result of evaluating a single credential candidate for a given model.
-#[derive(Debug)]
-pub(crate) enum LeaseStatus {
-    /// Credential is usable — here is the lease.
-    Ready(CodexLease),
-    /// Credential exists but has expired and needs refreshing.
-    Expired,
-    /// Credential is in a rate-limit cooldown for this model.
-    Cooling,
-    /// Credential is already being refreshed.
-    Refreshing,
-    /// Credential does not support the requested model.
-    Unsupported,
-    /// Credential ID not found in the manager.
-    Missing,
-}
-
-impl fmt::Display for LeaseStatus {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            LeaseStatus::Ready(lease) => write!(f, "ready(account={})", lease.account_id),
-            LeaseStatus::Expired => f.write_str("expired"),
-            LeaseStatus::Cooling => f.write_str("cooling"),
-            LeaseStatus::Refreshing => f.write_str("refreshing"),
-            LeaseStatus::Unsupported => f.write_str("unsupported"),
-            LeaseStatus::Missing => f.write_str("missing"),
-        }
-    }
-}
+type LeaseStatus = crate::providers::lease_status::LeaseStatus<CodexLease>;
 
 /// Runtime credential = base data + dynamic capabilities.
 #[derive(Debug, Clone)]
@@ -317,6 +288,7 @@ impl CredentialManager {
             id,
             account_id: cred.inner.account_id().to_string(),
             access_token: cred.inner.access_token().to_string(),
+            email: cred.inner.email().map(str::to_owned),
         })
     }
 

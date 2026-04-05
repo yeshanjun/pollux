@@ -342,7 +342,9 @@ impl CodexActor {
         route_key: Option<u64>,
     ) {
         let sticky_id = route_key.and_then(|rk| state.router.get(rk, model_mask));
+        let start = std::time::Instant::now();
         let assignment = state.manager.get_assigned(model_mask, sticky_id);
+        let sched_us = start.elapsed().as_micros() as u64;
 
         if !assignment.refresh_ids.is_empty() {
             self.handle_report_invalid(myself, state, assignment.refresh_ids)
@@ -358,8 +360,10 @@ impl CodexActor {
 
             let s = state.manager.stats(model_mask);
             info!(
+                sched_us,
                 id = assigned.id,
                 account = %assigned.account_id,
+                email = %assigned.email.as_deref().unwrap_or("-"),
                 model_mask = format_args!("0x{model_mask:016x}"),
                 sticky = assignment.route_hit,
                 queue_len = s.queue_len,

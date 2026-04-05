@@ -95,18 +95,13 @@ impl CodexClient {
                     .await?
                     .ok_or(CodexError::NoAvailableCredential)?;
 
-                let actor_took = start.elapsed();
+                let waited_us = start.elapsed().as_micros() as u64;
                 info!(
-                    channel = "codex",
-                    lease.id = lease.id,
-                    lease.waited_us = actor_took.as_micros() as u64,
-                    req.model = %model,
-                    req.stream = client_stream,
-
-                    "[Codex] [ID: {}] [{:?}] Post responses -> {}",
-                    lease.id,
-                    actor_took,
-                    model
+                    waited_us,
+                    id = lease.id,
+                    model = %model,
+                    stream = client_stream,
+                    "[Codex] Lease acquired"
                 );
 
                 with_pretty_json_debug(&body, |pretty_payload| {

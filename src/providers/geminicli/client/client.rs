@@ -16,10 +16,16 @@ pub(crate) struct GeminiClient {
     client: reqwest::Client,
     retry_policy: ExponentialBuilder,
     endpoints: ProviderEndpoints,
+    trace_header: Option<String>,
 }
 
 impl GeminiClient {
-    pub fn new(client: reqwest::Client, base_url: Url, retry_max_times: usize) -> Self {
+    pub fn new(
+        client: reqwest::Client,
+        base_url: Url,
+        retry_max_times: usize,
+        trace_header: Option<String>,
+    ) -> Self {
         let retry_policy = ExponentialBuilder::default()
             .with_min_delay(Duration::ZERO)
             .with_max_delay(Duration::ZERO)
@@ -31,6 +37,7 @@ impl GeminiClient {
             client,
             retry_policy,
             endpoints,
+            trace_header,
         }
     }
 
@@ -58,6 +65,7 @@ impl GeminiClient {
         let client = self.client.clone();
         let endpoints = self.endpoints.clone();
         let stream = ctx.stream;
+        let trace_header = self.trace_header.clone();
 
         let op = {
             move || {
@@ -66,6 +74,7 @@ impl GeminiClient {
                 let endpoints = endpoints.clone();
                 let base_request = base_request.clone();
                 let model = model.clone();
+                let trace_header = trace_header.clone();
                 async move {
                     let start = Instant::now();
                     let assigned = handle
@@ -109,6 +118,17 @@ impl GeminiClient {
                         &crate::providers::geminicli::geminicli_user_agent(&model),
                     ) {
                         headers.insert(reqwest::header::USER_AGENT, ua);
+                    }
+
+                    if let Some(ref header_name) = trace_header {
+                        let email = assigned.email.as_deref().unwrap_or("unknown");
+                        let trace_value = format!("geminicli:{}:{}", email, assigned.id);
+                        if let (Ok(name), Ok(val)) = (
+                            reqwest::header::HeaderName::from_bytes(header_name.as_bytes()),
+                            HeaderValue::from_str(&trace_value),
+                        ) {
+                            headers.insert(name, val);
+                        }
                     }
 
                     let resp = post_json_with_retry(

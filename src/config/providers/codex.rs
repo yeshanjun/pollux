@@ -44,6 +44,12 @@ pub struct CodexConfig {
     /// Falls back to `providers.defaults.retry_max_times`.
     #[serde(default)]
     pub retry_max_times: Option<usize>,
+
+    /// Optional custom trace header name for upstream requests.
+    /// TOML: `providers.codex.trace_header`.
+    /// Falls back to `providers.defaults.trace_header`.
+    #[serde(default)]
+    pub trace_header: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -54,6 +60,7 @@ pub struct CodexResolvedConfig {
     pub model_list: Vec<String>,
     pub enable_multiplexing: bool,
     pub retry_max_times: usize,
+    pub trace_header: Option<String>,
 }
 
 impl CodexConfig {
@@ -67,6 +74,10 @@ impl CodexConfig {
                 .enable_multiplexing
                 .unwrap_or(defaults.enable_multiplexing),
             retry_max_times: self.retry_max_times.unwrap_or(defaults.retry_max_times),
+            trace_header: self
+                .trace_header
+                .clone()
+                .or_else(|| defaults.trace_header.clone()),
         }
     }
 }
@@ -80,6 +91,7 @@ impl Default for CodexConfig {
             model_list: default_model_list(),
             enable_multiplexing: None,
             retry_max_times: None,
+            trace_header: None,
         }
     }
 }

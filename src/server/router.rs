@@ -1,9 +1,9 @@
 use crate::providers::Providers;
 use crate::providers::antigravity::ANTIGRAVITY_USER_AGENT;
-use crate::providers::codex::CODEX_USER_AGENT;
 use crate::providers::codex::client::CodexClient;
-use crate::providers::geminicli::GEMINICLI_USER_AGENT;
+use crate::providers::codex::{CODEX_OAUTH_USER_AGENT, CODEX_USER_AGENT};
 use crate::providers::geminicli::client::GeminiClient;
+use crate::providers::geminicli::{GEMINICLI_USER_AGENT, GOOGLE_AUTH_LIB_USER_AGENT};
 use crate::server::guards::auth::RequireKeyAuth;
 use crate::server::routes::antigravity::oauth::{
     antigravity_oauth_callback_root, antigravity_oauth_entry,
@@ -105,13 +105,20 @@ impl PolluxState {
                 .build()
                 .expect("failed to build reqwest client")
         }
+        let geminicli_default_url: url::Url =
+            "https://cloudcode-pa.googleapis.com".parse().unwrap();
+        let codex_default_url: url::Url = "https://chatgpt.com".parse().unwrap();
+
+        let geminicli_has_custom_url = geminicli_cfg.api_url != geminicli_default_url;
+        let codex_has_custom_url = codex_cfg.api_url != codex_default_url;
+
         let geminicli_client = build_client(
-            GEMINICLI_USER_AGENT,
+            GOOGLE_AUTH_LIB_USER_AGENT,
             geminicli_cfg.proxy.clone(),
             geminicli_cfg.enable_multiplexing,
         );
         let codex_client = build_client(
-            CODEX_USER_AGENT,
+            CODEX_OAUTH_USER_AGENT,
             codex_cfg.proxy.clone(),
             codex_cfg.enable_multiplexing,
         );
@@ -121,15 +128,34 @@ impl PolluxState {
             antigravity_cfg.enable_multiplexing,
         );
 
+        // When a custom api_url is set it acts as a reverse proxy, so the
+        // caller should bypass the configured proxy and connect directly.
+        let geminicli_caller_client = if geminicli_has_custom_url {
+            build_client(
+                GEMINICLI_USER_AGENT,
+                None,
+                geminicli_cfg.enable_multiplexing,
+            )
+        } else {
+            geminicli_client.clone()
+        };
+        let codex_caller_client = if codex_has_custom_url {
+            build_client(CODEX_USER_AGENT, None, codex_cfg.enable_multiplexing)
+        } else {
+            codex_client.clone()
+        };
+
         let geminicli_caller = GeminiClient::new(
-            geminicli_client.clone(),
+            geminicli_caller_client,
             geminicli_cfg.api_url.clone(),
             geminicli_cfg.retry_max_times,
+            geminicli_cfg.trace_header.clone(),
         );
         let codex_caller = CodexClient::new(
-            codex_client.clone(),
+            codex_caller_client,
             codex_cfg.api_url.clone(),
             codex_cfg.retry_max_times,
+            codex_cfg.trace_header.clone(),
         );
 
         Self {

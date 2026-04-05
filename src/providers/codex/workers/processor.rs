@@ -100,7 +100,7 @@ impl Actor for CodexOauthWorkerActor {
     ) -> Result<Self::State, ActorProcessingErr> {
         let mut headers = HeaderMap::new();
         let mut builder = reqwest::Client::builder()
-            .user_agent("codex-oauth/1.0".to_string())
+            .user_agent(crate::providers::codex::CODEX_OAUTH_USER_AGENT)
             .connect_timeout(Duration::from_secs(5))
             .timeout(Duration::from_secs(30));
 

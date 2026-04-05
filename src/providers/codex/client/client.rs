@@ -7,6 +7,7 @@ use crate::server::routes::codex::headers::{CodexRequestHeaders, OpenaiRequestHe
 use crate::utils::logging::with_pretty_json_debug;
 use backon::{ExponentialBuilder, Retryable};
 use pollux_schema::{CodexErrorBody, CodexRequestBody};
+use reqwest::header::{HeaderName, HeaderValue};
 
 use std::time::{Duration, Instant};
 use tracing::{debug, info};
@@ -22,10 +23,16 @@ pub(crate) struct CodexClient {
     client: reqwest::Client,
     retry_policy: ExponentialBuilder,
     endpoints: ProviderEndpoints,
+    trace_header: Option<String>,
 }
 
 impl CodexClient {
-    pub(crate) fn new(client: reqwest::Client, base_url: Url, retry_max_times: usize) -> Self {
+    pub(crate) fn new(
+        client: reqwest::Client,
+        base_url: Url,
+        retry_max_times: usize,
+        trace_header: Option<String>,
+    ) -> Self {
         let retry_policy = ExponentialBuilder::default()
             .with_min_delay(Duration::ZERO)
             .with_max_delay(Duration::ZERO)
@@ -37,6 +44,7 @@ impl CodexClient {
             client,
             retry_policy,
             endpoints,
+            trace_header,
         }
     }
 
@@ -67,6 +75,7 @@ impl CodexClient {
         let body = body.clone();
         let model = model.to_string();
         let inbound_headers = inbound_headers.clone();
+        let trace_header = self.trace_header.clone();
 
         let op = move || {
             let handle = handle.clone();
@@ -75,6 +84,7 @@ impl CodexClient {
             let body = body.clone();
             let model = model.clone();
             let inbound_headers = inbound_headers.clone();
+            let trace_header = trace_header.clone();
             async move {
                 let start = Instant::now();
                 let lease = handle
@@ -105,7 +115,18 @@ impl CodexClient {
 
                 let codex_headers = CodexRequestHeaders::build(&inbound_headers, &lease);
                 debug!(codex_headers = ?codex_headers, "[Codex] Prepared upstream headers for request");
-                let upstream_headers = codex_headers.into_header_map();
+                let mut upstream_headers = codex_headers.into_header_map();
+
+                if let Some(ref header_name) = trace_header {
+                    let email = lease.email.as_deref().unwrap_or("unknown");
+                    let trace_value = format!("codex:{}:{}", email, lease.id);
+                    if let (Ok(name), Ok(val)) = (
+                        HeaderName::from_bytes(header_name.as_bytes()),
+                        HeaderValue::from_str(&trace_value),
+                    ) {
+                        upstream_headers.insert(name, val);
+                    }
+                }
 
                 let resp = post_json_with_retry(
                     "Codex",

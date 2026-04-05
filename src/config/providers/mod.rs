@@ -26,6 +26,12 @@ pub struct ProviderDefaults {
     /// TOML: `providers.defaults.retry_max_times`. Default: `3`.
     #[serde(default = "default_retry_max_times")]
     pub retry_max_times: usize,
+
+    /// Optional custom trace header name for upstream requests.
+    /// When set, the header is inserted with value `{channel}:{email}:{lease_id}`.
+    /// TOML: `providers.defaults.trace_header`. Example: `"X-Trace-ID"`.
+    #[serde(default)]
+    pub trace_header: Option<String>,
 }
 
 impl Default for ProviderDefaults {
@@ -34,6 +40,7 @@ impl Default for ProviderDefaults {
             proxy: None,
             enable_multiplexing: default_enable_multiplexing(),
             retry_max_times: default_retry_max_times(),
+            trace_header: None,
         }
     }
 }

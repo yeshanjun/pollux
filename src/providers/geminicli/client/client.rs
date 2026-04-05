@@ -1,4 +1,3 @@
-use crate::config::GeminiCliResolvedConfig;
 use crate::error::{GeminiCliError, GeminiCliErrorBody, IsRetryable};
 use crate::providers::geminicli::{GeminiCliActorHandle, GeminiContext};
 use crate::providers::policy::classify_upstream_error;
@@ -12,39 +11,26 @@ use std::time::{Duration, Instant};
 use tracing::{debug, error, info, warn};
 use url::Url;
 
-pub struct GeminiClient {
+#[derive(Clone)]
+pub(crate) struct GeminiClient {
     client: reqwest::Client,
     retry_policy: ExponentialBuilder,
     endpoints: ProviderEndpoints,
 }
 
 impl GeminiClient {
-    pub fn new(
-        cfg: &GeminiCliResolvedConfig,
-        client: reqwest::Client,
-        base_url: Option<Url>,
-    ) -> Self {
+    pub fn new(client: reqwest::Client, base_url: Url, retry_max_times: usize) -> Self {
         let retry_policy = ExponentialBuilder::default()
-            .with_min_delay(Duration::from_millis(100))
-            .with_max_delay(Duration::from_millis(300))
-            .with_max_times(cfg.retry_max_times)
-            .with_jitter();
-        let endpoints = base_url
-            .map(Self::endpoints_for_base)
-            .unwrap_or_else(Self::default_endpoints);
+            .with_min_delay(Duration::ZERO)
+            .with_max_delay(Duration::ZERO)
+            .with_max_times(retry_max_times);
+        let endpoints = Self::endpoints_for_base(base_url);
 
         Self {
             client,
             retry_policy,
             endpoints,
         }
-    }
-
-    fn default_endpoints() -> ProviderEndpoints {
-        Self::endpoints_for_base(
-            Url::parse("https://cloudcode-pa.googleapis.com")
-                .expect("invalid fixed Gemini base URL"),
-        )
     }
 
     fn endpoints_for_base(base: Url) -> ProviderEndpoints {

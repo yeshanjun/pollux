@@ -1,4 +1,3 @@
-use crate::config::CodexResolvedConfig;
 use crate::error::{CodexError, IsRetryable};
 use crate::providers::codex::CodexActorHandle;
 use crate::providers::provider_endpoints::ProviderEndpoints;
@@ -18,6 +17,7 @@ use url::Url;
 /// Notes:
 /// - Schema conversion is handled by the router; this client only serializes and forwards JSON.
 /// - OAuth/token refresh is intentionally left as future work (placeholders in config).
+#[derive(Clone)]
 pub(crate) struct CodexClient {
     client: reqwest::Client,
     retry_policy: ExponentialBuilder,
@@ -25,32 +25,18 @@ pub(crate) struct CodexClient {
 }
 
 impl CodexClient {
-    pub(crate) fn new(
-        cfg: &CodexResolvedConfig,
-        client: reqwest::Client,
-        base_url: Option<Url>,
-    ) -> Self {
-        let max_attempts = cfg.retry_max_times.max(1);
+    pub(crate) fn new(client: reqwest::Client, base_url: Url, retry_max_times: usize) -> Self {
         let retry_policy = ExponentialBuilder::default()
-            .with_min_delay(Duration::from_millis(100))
-            .with_max_delay(Duration::from_millis(300))
-            .with_max_times(max_attempts)
-            .with_jitter();
-        let endpoints = base_url
-            .map(Self::endpoints_for_base)
-            .unwrap_or_else(Self::default_endpoints);
+            .with_min_delay(Duration::ZERO)
+            .with_max_delay(Duration::ZERO)
+            .with_max_times(retry_max_times);
+        let endpoints = Self::endpoints_for_base(base_url);
 
         Self {
             client,
             retry_policy,
             endpoints,
         }
-    }
-
-    fn default_endpoints() -> ProviderEndpoints {
-        Self::endpoints_for_base(
-            Url::parse("https://chatgpt.com").expect("invalid fixed Codex base URL"),
-        )
     }
 
     fn endpoints_for_base(base: Url) -> ProviderEndpoints {

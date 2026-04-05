@@ -211,6 +211,7 @@ impl Actor for CodexActor {
         );
 
         info!(
+            api_url = %cfg.api_url,
             proxy = %cfg.proxy.as_ref().map(|u| u.as_str()).unwrap_or("<none>"),
             enable_multiplexing = cfg.enable_multiplexing,
             retry_max_times = cfg.retry_max_times,

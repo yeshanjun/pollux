@@ -1,6 +1,5 @@
 use super::{extract::CodexPreprocess, respond};
 use crate::error::CodexError;
-use crate::providers::codex::client::CodexClient;
 use crate::server::router::PolluxState;
 use axum::{
     Json,
@@ -30,13 +29,8 @@ pub(super) async fn codex_response_handler(
         "Incoming Codex request"
     );
 
-    let caller = CodexClient::new(
-        state.providers.codex_cfg.as_ref(),
-        state.codex_client.clone(),
-        None,
-    );
-
-    let upstream_resp = caller
+    let upstream_resp = state
+        .codex_caller
         .call_codex(
             &state.providers.codex,
             ctx.model.as_str(),

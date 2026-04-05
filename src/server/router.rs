@@ -1,7 +1,9 @@
 use crate::providers::Providers;
 use crate::providers::antigravity::ANTIGRAVITY_USER_AGENT;
 use crate::providers::codex::CODEX_USER_AGENT;
+use crate::providers::codex::client::CodexClient;
 use crate::providers::geminicli::GEMINICLI_USER_AGENT;
+use crate::providers::geminicli::client::GeminiClient;
 use crate::server::guards::auth::RequireKeyAuth;
 use crate::server::routes::antigravity::oauth::{
     antigravity_oauth_callback_root, antigravity_oauth_entry,
@@ -53,9 +55,11 @@ fn format_http_version(version: Version) -> &'static str {
 #[derive(Clone)]
 pub struct PolluxState {
     pub providers: Providers,
-    pub client: reqwest::Client,
+    pub geminicli_client: reqwest::Client,
     pub codex_client: reqwest::Client,
     pub antigravity_client: reqwest::Client,
+    pub(crate) geminicli_caller: GeminiClient,
+    pub(crate) codex_caller: CodexClient,
     pub pollux_key: Arc<str>,
     pub insecure_cookie: bool,
 }
@@ -101,7 +105,7 @@ impl PolluxState {
                 .build()
                 .expect("failed to build reqwest client")
         }
-        let client = build_client(
+        let geminicli_client = build_client(
             GEMINICLI_USER_AGENT,
             geminicli_cfg.proxy.clone(),
             geminicli_cfg.enable_multiplexing,
@@ -117,11 +121,24 @@ impl PolluxState {
             antigravity_cfg.enable_multiplexing,
         );
 
+        let geminicli_caller = GeminiClient::new(
+            geminicli_client.clone(),
+            geminicli_cfg.api_url.clone(),
+            geminicli_cfg.retry_max_times,
+        );
+        let codex_caller = CodexClient::new(
+            codex_client.clone(),
+            codex_cfg.api_url.clone(),
+            codex_cfg.retry_max_times,
+        );
+
         Self {
             providers,
-            client,
+            geminicli_client,
             codex_client,
             antigravity_client,
+            geminicli_caller,
+            codex_caller,
             pollux_key,
             insecure_cookie,
         }

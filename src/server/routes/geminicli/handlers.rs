@@ -3,7 +3,6 @@ use super::{
     respond::{build_json_response, build_stream_response},
 };
 use crate::error::GeminiCliError;
-use crate::providers::geminicli::client::GeminiClient;
 use crate::server::router::PolluxState;
 use axum::{
     Json,
@@ -16,14 +15,8 @@ pub async fn gemini_cli_handler(
     State(state): State<PolluxState>,
     GeminiPreprocess(body, ctx): GeminiPreprocess,
 ) -> Result<Response, GeminiCliError> {
-    // Construct caller
-    let caller = GeminiClient::new(
-        state.providers.geminicli_cfg.as_ref(),
-        state.client.clone(),
-        None,
-    );
-
-    let upstream_resp = caller
+    let upstream_resp = state
+        .geminicli_caller
         .call_gemini_cli(&state.providers.geminicli, &ctx, &body)
         .await?;
 

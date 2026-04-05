@@ -58,7 +58,7 @@ pub async fn google_oauth_callback(
 
     let result = process_oauth_exchange(
         &state.providers.geminicli,
-        &state.client,
+        &state.geminicli_client,
         &query.code,
         &query.state,
         session_data,

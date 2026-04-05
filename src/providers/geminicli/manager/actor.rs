@@ -214,6 +214,7 @@ impl Actor for GeminiCliActor {
         );
 
         info!(
+            api_url = %cfg.api_url,
             proxy = %cfg.proxy.as_ref().map(|u| u.as_str()).unwrap_or("<none>"),
             enable_multiplexing = cfg.enable_multiplexing,
             oauth_tps = cfg.oauth_tps,

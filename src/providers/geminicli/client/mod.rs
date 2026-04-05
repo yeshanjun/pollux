@@ -2,4 +2,4 @@ pub mod oauth;
 #[path = "client.rs"]
 pub mod upstream;
 
-pub use upstream::GeminiClient;
+pub(crate) use upstream::GeminiClient;

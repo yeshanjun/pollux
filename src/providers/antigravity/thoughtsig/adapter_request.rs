@@ -1,57 +1,43 @@
 use pollux_schema::gemini::{GeminiGenerateContentRequest, Part};
-use pollux_thoughtsig_core::{CacheKey, CacheKeyGenerator, ThoughtSignatureEngine};
+use pollux_thoughtsig_core::{
+    PatchEvent, PatchOutcome, Patchable, SignaturePatcher, SignaturePreview,
+};
 use tracing::debug;
 
-enum PatchDecision {
-    Skipped,
-    Patched { cache_key: Option<CacheKey> },
-    Dropped { cache_key: Option<CacheKey> },
-}
+struct GeminiPartPatch<'a>(&'a mut Part);
 
-fn patch_part(part: &mut Part, engine: &ThoughtSignatureEngine) -> PatchDecision {
-    // Keep the same priority as GeminiCLI: functionCall first, then thought text.
-    if let Some(function_call) = part.function_call.as_ref() {
-        let cache_key = CacheKeyGenerator::generate_json(function_call);
-        if let Some(signature) = cache_key.and_then(|key| engine.get_signature(&key)) {
-            *part.thought_signature_mut() = Some(signature.to_string());
-            return PatchDecision::Patched { cache_key };
+impl Patchable for GeminiPartPatch<'_> {
+    fn data(&self) -> PatchEvent<'_> {
+        if let Some(function_call) = self.0.function_call.as_ref() {
+            return PatchEvent::FunctionCall(function_call);
         }
 
-        *part.thought_signature_mut() = Some(engine.fallback_signature().to_string());
-        return PatchDecision::Patched { cache_key };
-    }
-
-    if part.thought == Some(true) {
-        let cache_key = part
-            .text
-            .as_deref()
-            .and_then(CacheKeyGenerator::generate_text);
-        let Some(cache_key) = cache_key else {
-            return PatchDecision::Dropped { cache_key: None };
-        };
-
-        if let Some(signature) = engine.get_signature(&cache_key) {
-            *part.thought_signature_mut() = Some(signature.to_string());
-            return PatchDecision::Patched {
-                cache_key: Some(cache_key),
-            };
+        if self.0.thought == Some(true) {
+            if let Some(text) = self.0.text.as_deref() {
+                return PatchEvent::ThoughtText(text);
+            }
+            return PatchEvent::ThoughtText("");
         }
 
-        return PatchDecision::Dropped {
-            cache_key: Some(cache_key),
-        };
+        PatchEvent::None
     }
 
-    PatchDecision::Skipped
+    fn thought_signature(&self) -> Option<&str> {
+        self.0.thought_signature.as_deref()
+    }
+
+    fn thought_signature_mut(&mut self) -> &mut Option<String> {
+        self.0.thought_signature_mut()
+    }
 }
 
+/// Fill or drop thought signatures on model parts (Drop policy).
+/// Parts without a cached signature are removed from the request
+/// because the upstream API rejects invalid signatures with 400.
 pub(super) fn patch_request(
     request: &mut GeminiGenerateContentRequest,
-    engine: &ThoughtSignatureEngine,
+    patcher: &SignaturePatcher,
 ) {
-    // Single-pass patch flow:
-    // request.contents(model only) -> content.parts -> patch each part.
-    // No pre-scan stage is needed.
     for (content_idx, content) in request.contents.iter_mut().enumerate() {
         if content.role.as_deref() != Some("model") {
             continue;
@@ -62,25 +48,24 @@ pub(super) fn patch_request(
             let current_part_idx = part_idx;
             part_idx += 1;
 
-            match patch_part(part, engine) {
-                PatchDecision::Skipped => true,
-                PatchDecision::Patched { cache_key } => {
+            let mut part_patch = GeminiPartPatch(part);
+            let outcome = patcher.patch(&mut part_patch);
+
+            match outcome {
+                PatchOutcome::Skipped => true,
+                PatchOutcome::Patched { cache_key } => {
                     debug!(
                         channel = "antigravity",
                         thoughtsig.phase = "fill",
                         content_idx = content_idx,
                         part_idx = current_part_idx,
                         key = ?cache_key,
-                        signature = %part
-                            .thought_signature
-                            .as_deref()
-                            .map(preview_signature)
-                            .unwrap_or_default(),
+                        signature = %SignaturePreview(part.thought_signature.as_deref().unwrap_or_default()),
                         "Thought signature decision"
                     );
                     true
                 }
-                PatchDecision::Dropped { cache_key } => {
+                PatchOutcome::Dropped { cache_key } => {
                     debug!(
                         channel = "antigravity",
                         thoughtsig.phase = "drop",
@@ -96,18 +81,10 @@ pub(super) fn patch_request(
     }
 }
 
-fn preview_signature(signature: &str) -> String {
-    const MAX: usize = 48;
-    if signature.len() <= MAX {
-        return signature.to_string();
-    }
-    format!("{}...", &signature[..MAX])
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pollux_thoughtsig_core::CacheKeyGenerator;
+    use pollux_thoughtsig_core::{CacheKeyGenerator, CacheMissPolicy, ThoughtSignatureEngine};
     use serde_json::json;
     use std::sync::Arc;
 
@@ -115,9 +92,20 @@ mod tests {
         serde_json::from_value(value).expect("request json must parse")
     }
 
+    fn drop_patcher() -> SignaturePatcher {
+        let engine = Arc::new(ThoughtSignatureEngine::new(3600, 1024));
+        SignaturePatcher::new(engine, CacheMissPolicy::Drop)
+    }
+
+    fn drop_patcher_with_engine() -> (SignaturePatcher, Arc<ThoughtSignatureEngine>) {
+        let engine = Arc::new(ThoughtSignatureEngine::new(3600, 1024));
+        let p = SignaturePatcher::new(engine.clone(), CacheMissPolicy::Drop);
+        (p, engine)
+    }
+
     #[test]
     fn patch_request_updates_only_model_content_parts() {
-        let engine = ThoughtSignatureEngine::new(3600, 1024);
+        let patcher = drop_patcher();
         let mut request = parse_request(json!({
             "contents": [
                 {
@@ -141,7 +129,7 @@ mod tests {
             ]
         }));
 
-        patch_request(&mut request, &engine);
+        patch_request(&mut request, &patcher);
 
         assert!(request.contents[0].parts[0].thought_signature.is_none());
         assert!(request.contents[1].parts.is_empty());
@@ -149,7 +137,7 @@ mod tests {
 
     #[test]
     fn patch_request_uses_cached_signature_for_function_call() {
-        let engine = ThoughtSignatureEngine::new(3600, 1024);
+        let (patcher, engine) = drop_patcher_with_engine();
         let function_call = json!({
             "name": "get_weather",
             "args": {
@@ -180,7 +168,7 @@ mod tests {
             ]
         }));
 
-        patch_request(&mut request, &engine);
+        patch_request(&mut request, &patcher);
 
         assert_eq!(
             request.contents[0].parts[0].thought_signature.as_deref(),
@@ -189,8 +177,8 @@ mod tests {
     }
 
     #[test]
-    fn patch_request_uses_dummy_signature_for_function_call_cache_miss() {
-        let engine = ThoughtSignatureEngine::new(3600, 1024);
+    fn patch_request_drops_function_call_on_cache_miss() {
+        let patcher = drop_patcher();
         let mut request = parse_request(json!({
             "contents": [
                 {
@@ -209,17 +197,13 @@ mod tests {
             ]
         }));
 
-        patch_request(&mut request, &engine);
-
-        assert_eq!(
-            request.contents[0].parts[0].thought_signature.as_deref(),
-            Some("skip_thought_signature_validator")
-        );
+        patch_request(&mut request, &patcher);
+        assert!(request.contents[0].parts.is_empty());
     }
 
     #[test]
     fn patch_request_skips_non_patchable_parts() {
-        let engine = ThoughtSignatureEngine::new(3600, 1024);
+        let patcher = drop_patcher();
         let mut request = parse_request(json!({
             "contents": [
                 {
@@ -233,13 +217,13 @@ mod tests {
             ]
         }));
 
-        patch_request(&mut request, &engine);
+        patch_request(&mut request, &patcher);
         assert!(request.contents[0].parts[0].thought_signature.is_none());
     }
 
     #[test]
     fn patch_request_drops_uncached_thought_part() {
-        let engine = ThoughtSignatureEngine::new(3600, 1024);
+        let patcher = drop_patcher();
         let mut request = parse_request(json!({
             "contents": [
                 {
@@ -254,13 +238,13 @@ mod tests {
             ]
         }));
 
-        patch_request(&mut request, &engine);
+        patch_request(&mut request, &patcher);
         assert!(request.contents[0].parts.is_empty());
     }
 
     #[test]
     fn patch_request_keeps_cached_thought_part() {
-        let engine = ThoughtSignatureEngine::new(3600, 1024);
+        let (patcher, engine) = drop_patcher_with_engine();
         let key = CacheKeyGenerator::generate_text("model thought").expect("text key must exist");
         engine.put_signature(key, Arc::from("sig_thought_001"));
 
@@ -278,7 +262,7 @@ mod tests {
             ]
         }));
 
-        patch_request(&mut request, &engine);
+        patch_request(&mut request, &patcher);
 
         assert_eq!(request.contents[0].parts.len(), 1);
         assert_eq!(
@@ -289,7 +273,7 @@ mod tests {
 
     #[test]
     fn patch_request_drops_blank_thought_part() {
-        let engine = ThoughtSignatureEngine::new(3600, 1024);
+        let patcher = drop_patcher();
         let mut request = parse_request(json!({
             "contents": [
                 {
@@ -304,7 +288,34 @@ mod tests {
             ]
         }));
 
-        patch_request(&mut request, &engine);
+        patch_request(&mut request, &patcher);
         assert!(request.contents[0].parts.is_empty());
+    }
+
+    #[test]
+    fn patch_request_preserves_client_provided_signature() {
+        let patcher = drop_patcher();
+        let mut request = parse_request(json!({
+            "contents": [
+                {
+                    "role": "model",
+                    "parts": [
+                        {
+                            "thought": true,
+                            "text": "model thought",
+                            "thoughtSignature": "client_sig_123"
+                        }
+                    ]
+                }
+            ]
+        }));
+
+        patch_request(&mut request, &patcher);
+
+        assert_eq!(request.contents[0].parts.len(), 1);
+        assert_eq!(
+            request.contents[0].parts[0].thought_signature.as_deref(),
+            Some("client_sig_123")
+        );
     }
 }

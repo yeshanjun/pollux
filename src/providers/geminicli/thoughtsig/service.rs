@@ -1,7 +1,9 @@
 use super::adapter_request::patch_request;
 use super::adapter_response::GeminiResponseAdapter;
 use pollux_schema::gemini::{GeminiGenerateContentRequest, GeminiResponseBody};
-use pollux_thoughtsig_core::{SignatureSniffer, ThoughtSignatureEngine};
+use pollux_thoughtsig_core::{
+    CacheMissPolicy, SignaturePatcher, SignatureSniffer, ThoughtSignatureEngine,
+};
 use std::sync::Arc;
 
 const DEFAULT_TTL_SECS: u64 = 60 * 60;
@@ -10,6 +12,7 @@ const DEFAULT_MAX_CAPACITY: u64 = 200_000;
 #[derive(Clone)]
 pub struct GeminiThoughtSigService {
     engine: Arc<ThoughtSignatureEngine>,
+    patcher: Arc<SignaturePatcher>,
 }
 
 impl Default for GeminiThoughtSigService {
@@ -20,15 +23,20 @@ impl Default for GeminiThoughtSigService {
 
 impl GeminiThoughtSigService {
     pub fn new() -> Self {
-        let engine = ThoughtSignatureEngine::new(DEFAULT_TTL_SECS, DEFAULT_MAX_CAPACITY);
+        let engine = Arc::new(ThoughtSignatureEngine::new(
+            DEFAULT_TTL_SECS,
+            DEFAULT_MAX_CAPACITY,
+        ));
+        let patcher = Arc::new(SignaturePatcher::new(
+            engine.clone(),
+            CacheMissPolicy::Fallback,
+        ));
 
-        Self {
-            engine: Arc::new(engine),
-        }
+        Self { engine, patcher }
     }
 
     pub fn patch_request(&self, request: &mut GeminiGenerateContentRequest) {
-        patch_request(request, self.engine.as_ref())
+        patch_request(request, &self.patcher)
     }
 
     pub fn build_sniffer(&self) -> SignatureSniffer {

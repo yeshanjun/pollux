@@ -1,30 +1,13 @@
 use crate::gemini::GeminiGenerateContentRequest;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
-#[derive(Debug, Clone)]
-pub struct GeminiCliRequestMeta {
-    pub model: String,
-    pub project: String,
-}
-
-impl GeminiCliRequestMeta {
-    /// Build a Gemini CLI upstream envelope from runtime metadata and
-    /// a typed Gemini `generateContent` request body.
-    pub fn into_request(self, request: GeminiGenerateContentRequest) -> GeminiCliRequest {
-        GeminiCliRequest {
-            model: self.model,
-            project: self.project,
-            request,
-        }
-    }
-}
-
-/// Gemini CLI upstream request envelope.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GeminiCliRequest {
-    pub model: String,
-    pub project: String,
-    pub request: GeminiGenerateContentRequest,
+/// Vertex AI `generateContent` upstream envelope that borrows the heavy
+/// request body, avoiding deep-clones on every retry attempt.
+#[derive(Debug, Serialize)]
+pub struct VertexGenerateContentRequest<'a> {
+    pub model: &'a str,
+    pub project: &'a str,
+    pub request: &'a GeminiGenerateContentRequest,
 }
 
 #[cfg(test)]
@@ -33,7 +16,7 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn into_request_fills_envelope() {
+    fn serializes_with_borrowed_fields() {
         let request: GeminiGenerateContentRequest = serde_json::from_value(json!({
             "contents": [{
                 "role": "user",
@@ -42,31 +25,15 @@ mod tests {
         }))
         .unwrap();
 
-        let body = GeminiCliRequestMeta {
-            model: "gemini-2.5-flash".to_string(),
-            project: "project-1".to_string(),
-        }
-        .into_request(request);
+        let payload = VertexGenerateContentRequest {
+            model: "gemini-2.5-flash",
+            project: "project-1",
+            request: &request,
+        };
 
-        assert_eq!(body.model, "gemini-2.5-flash");
-        assert_eq!(body.project, "project-1");
-    }
-
-    #[test]
-    fn envelope_roundtrips() {
-        let input = json!({
-            "model": "gemini-2.5-pro",
-            "project": "project-1",
-            "request": {
-                "contents": [{
-                    "role": "user",
-                    "parts": [{"text": "ping"}]
-                }]
-            }
-        });
-
-        let body: GeminiCliRequest = serde_json::from_value(input.clone()).unwrap();
-        let output = serde_json::to_value(body).unwrap();
-        assert_eq!(output, input);
+        let value = serde_json::to_value(&payload).unwrap();
+        assert_eq!(value["model"], "gemini-2.5-flash");
+        assert_eq!(value["project"], "project-1");
+        assert_eq!(value["request"]["contents"][0]["parts"][0]["text"], "hello");
     }
 }

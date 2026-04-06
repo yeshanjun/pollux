@@ -5,7 +5,9 @@ use crate::providers::provider_endpoints::ProviderEndpoints;
 use crate::providers::upstream_retry::post_json_with_retry;
 use crate::utils::logging::with_pretty_json_debug;
 use backon::{ExponentialBuilder, Retryable};
-use pollux_schema::{gemini::GeminiGenerateContentRequest, geminicli::GeminiCliRequestMeta};
+use pollux_schema::{
+    gemini::GeminiGenerateContentRequest, geminicli::VertexGenerateContentRequest,
+};
 use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
 use std::time::{Duration, Instant};
 use tracing::{debug, error, info, warn};
@@ -57,177 +59,166 @@ impl GeminiClient {
         ctx: &GeminiContext,
         body: &GeminiGenerateContentRequest,
     ) -> Result<reqwest::Response, GeminiCliError> {
-        let base_request = body.clone();
-        let model = ctx.model.clone();
+        let model = &ctx.model;
         let model_mask = ctx.model_mask;
-
-        let handle = handle.clone();
-        let client = self.client.clone();
-        let endpoints = self.endpoints.clone();
         let stream = ctx.stream;
-        let trace_header = self.trace_header.clone();
+        let client = &self.client;
+        let endpoints = &self.endpoints;
+        let trace_header = &self.trace_header;
 
         let op = {
-            move || {
-                let handle = handle.clone();
-                let client = client.clone();
-                let endpoints = endpoints.clone();
-                let base_request = base_request.clone();
-                let model = model.clone();
-                let trace_header = trace_header.clone();
-                async move {
-                    let start = Instant::now();
-                    let assigned = handle
-                        .get_credential(model_mask)
-                        .await?
-                        .ok_or(GeminiCliError::NoAvailableCredential)?;
+            move || async move {
+                let start = Instant::now();
+                let assigned = handle
+                    .get_credential(model_mask)
+                    .await?
+                    .ok_or(GeminiCliError::NoAvailableCredential)?;
 
-                    let waited_us = start.elapsed().as_micros() as u64;
-                    info!(
-                        waited_us,
-                        id = assigned.id,
-                        model = %model,
-                        stream,
-                        "[GeminiCli] Lease acquired"
+                let waited_us = start.elapsed().as_micros() as u64;
+                info!(
+                    waited_us,
+                    id = assigned.id,
+                    model = %model,
+                    stream,
+                    "[GeminiCli] Lease acquired"
+                );
+
+                let payload = VertexGenerateContentRequest {
+                    model: &model,
+                    project: &assigned.project_id,
+                    request: body,
+                };
+
+                with_pretty_json_debug(&payload, |pretty_payload| {
+                    debug!(
+                        channel = "geminicli",
+                        lease.id = assigned.id,
+                        req.model = %model,
+                        req.stream = stream,
+                        body = %pretty_payload,
+                        "[GeminiCLI] Prepared upstream payload"
                     );
+                });
 
-                    let payload = GeminiCliRequestMeta {
-                        model: model.clone(),
-                        project: assigned.project_id.clone(),
-                    }
-                    .into_request(base_request.clone());
-
-                    with_pretty_json_debug(&payload, |pretty_payload| {
-                        debug!(
-                            channel = "geminicli",
-                            lease.id = assigned.id,
-                            req.model = %model,
-                            req.stream = stream,
-                            body = %pretty_payload,
-                            "[GeminiCLI] Prepared upstream payload"
-                        );
-                    });
-
-                    let mut headers = HeaderMap::new();
-                    headers.insert(
-                        AUTHORIZATION,
-                        HeaderValue::from_str(&format!("Bearer {}", assigned.access_token))
-                            .expect("invalid fixed auth header value"),
-                    );
-                    if let Ok(ua) = HeaderValue::from_str(
-                        &crate::providers::geminicli::geminicli_user_agent(&model),
-                    ) {
-                        headers.insert(reqwest::header::USER_AGENT, ua);
-                    }
-
-                    if let Some(ref header_name) = trace_header {
-                        let email = assigned.email.as_deref().unwrap_or("unknown");
-                        let trace_value = format!("geminicli:{}:{}", email, assigned.id);
-                        if let (Ok(name), Ok(val)) = (
-                            reqwest::header::HeaderName::from_bytes(header_name.as_bytes()),
-                            HeaderValue::from_str(&trace_value),
-                        ) {
-                            headers.insert(name, val);
-                        }
-                    }
-
-                    let resp = post_json_with_retry(
-                        "GeminiCLI",
-                        &client,
-                        endpoints.select(stream),
-                        Some(headers),
-                        &payload,
-                    )
-                    .await?;
-                    if !resp.status().is_success() {
-                        let status = resp.status();
-
-                        let (action, final_error) = classify_upstream_error(
-                            resp,
-                            |json: GeminiCliErrorBody| GeminiCliError::UpstreamMappedError {
-                                status,
-                                body: json,
-                            },
-                            |status, body| GeminiCliError::UpstreamFallbackError { status, body },
-                        )
-                        .await;
-
-                        match &action {
-                            crate::providers::ActionForError::RateLimit(duration) => {
-                                handle
-                                    .report_rate_limit(assigned.id, model_mask, *duration)
-                                    .await;
-                                info!(
-                                    "Project: {}, rate limited, retry in {:?}",
-                                    assigned.project_id, duration
-                                );
-                            }
-                            crate::providers::ActionForError::Ban => {
-                                handle.report_baned(assigned.id).await;
-                                info!("Project: {}, banned", assigned.project_id);
-                            }
-                            crate::providers::ActionForError::ModelUnsupported => {
-                                handle
-                                    .report_model_unsupported(assigned.id, model_mask)
-                                    .await;
-                                info!("Project: {}, model unsupported", assigned.project_id);
-                            }
-                            crate::providers::ActionForError::Invalid => {
-                                handle.report_invalid(assigned.id).await;
-                                info!("Project: {}, invalid", assigned.project_id);
-                            }
-                            crate::providers::ActionForError::None => {}
-                        }
-
-                        match &final_error {
-                            GeminiCliError::UpstreamMappedError { status, body } => {
-                                let variant = if status.as_u16() == 429 {
-                                    Some(body.rate_limit_variant())
-                                } else {
-                                    None
-                                };
-                                warn!(
-                                    lease_id = assigned.id,
-                                    model = %model,
-                                    status = %status,
-                                    action = ?action,
-                                    variant = variant.map(|v| v.to_string()).as_deref(),
-                                    "[GeminiCli] Upstream mapped error"
-                                );
-                            }
-                            GeminiCliError::UpstreamFallbackError { status, .. } => {
-                                warn!(
-                                    lease_id = assigned.id,
-                                    model = %model,
-                                    status = %status,
-                                    action = ?action,
-                                    "[GeminiCli] Upstream fallback error"
-                                );
-                            }
-                            GeminiCliError::Reqwest(error) => {
-                                warn!(
-                                    lease_id = assigned.id,
-                                    model = %model,
-                                    status = ?error.status(),
-                                    action = ?action,
-                                    "[GeminiCli] Upstream reqwest error"
-                                );
-                            }
-                            _ => {
-                                warn!(
-                                    lease_id = assigned.id,
-                                    model = %model,
-                                    status = "N/A",
-                                    action = ?action,
-                                    "[GeminiCli] Upstream other error"
-                                );
-                            }
-                        }
-
-                        return Err(final_error);
-                    }
-                    Ok(resp)
+                let mut headers = HeaderMap::new();
+                headers.insert(
+                    AUTHORIZATION,
+                    HeaderValue::from_str(&format!("Bearer {}", assigned.access_token))
+                        .expect("invalid fixed auth header value"),
+                );
+                if let Ok(ua) = HeaderValue::from_str(
+                    &crate::providers::geminicli::geminicli_user_agent(&model),
+                ) {
+                    headers.insert(reqwest::header::USER_AGENT, ua);
                 }
+
+                if let Some(header_name) = trace_header {
+                    let email = assigned.email.as_deref().unwrap_or("unknown");
+                    let trace_value = format!("geminicli:{}:{}", email, assigned.id);
+                    if let (Ok(name), Ok(val)) = (
+                        reqwest::header::HeaderName::from_bytes(header_name.as_bytes()),
+                        HeaderValue::from_str(&trace_value),
+                    ) {
+                        headers.insert(name, val);
+                    }
+                }
+
+                let resp = post_json_with_retry(
+                    "GeminiCLI",
+                    &client,
+                    endpoints.select(stream),
+                    Some(headers),
+                    &payload,
+                )
+                .await?;
+                if !resp.status().is_success() {
+                    let status = resp.status();
+
+                    let (action, final_error) = classify_upstream_error(
+                        resp,
+                        |json: GeminiCliErrorBody| GeminiCliError::UpstreamMappedError {
+                            status,
+                            body: json,
+                        },
+                        |status, body| GeminiCliError::UpstreamFallbackError { status, body },
+                    )
+                    .await;
+
+                    match &action {
+                        crate::providers::ActionForError::RateLimit(duration) => {
+                            handle
+                                .report_rate_limit(assigned.id, model_mask, *duration)
+                                .await;
+                            info!(
+                                "Project: {}, rate limited, retry in {:?}",
+                                assigned.project_id, duration
+                            );
+                        }
+                        crate::providers::ActionForError::Ban => {
+                            handle.report_baned(assigned.id).await;
+                            info!("Project: {}, banned", assigned.project_id);
+                        }
+                        crate::providers::ActionForError::ModelUnsupported => {
+                            handle
+                                .report_model_unsupported(assigned.id, model_mask)
+                                .await;
+                            info!("Project: {}, model unsupported", assigned.project_id);
+                        }
+                        crate::providers::ActionForError::Invalid => {
+                            handle.report_invalid(assigned.id).await;
+                            info!("Project: {}, invalid", assigned.project_id);
+                        }
+                        crate::providers::ActionForError::None => {}
+                    }
+
+                    match &final_error {
+                        GeminiCliError::UpstreamMappedError { status, body } => {
+                            let variant = if status.as_u16() == 429 {
+                                Some(body.rate_limit_variant())
+                            } else {
+                                None
+                            };
+                            warn!(
+                                lease_id = assigned.id,
+                                model = %model,
+                                status = %status,
+                                action = ?action,
+                                variant = variant.map(|v| v.to_string()).as_deref(),
+                                "[GeminiCli] Upstream mapped error"
+                            );
+                        }
+                        GeminiCliError::UpstreamFallbackError { status, .. } => {
+                            warn!(
+                                lease_id = assigned.id,
+                                model = %model,
+                                status = %status,
+                                action = ?action,
+                                "[GeminiCli] Upstream fallback error"
+                            );
+                        }
+                        GeminiCliError::Reqwest(error) => {
+                            warn!(
+                                lease_id = assigned.id,
+                                model = %model,
+                                status = ?error.status(),
+                                action = ?action,
+                                "[GeminiCli] Upstream reqwest error"
+                            );
+                        }
+                        _ => {
+                            warn!(
+                                lease_id = assigned.id,
+                                model = %model,
+                                status = "N/A",
+                                action = ?action,
+                                "[GeminiCli] Upstream other error"
+                            );
+                        }
+                    }
+
+                    return Err(final_error);
+                }
+                Ok(resp)
             }
         };
 

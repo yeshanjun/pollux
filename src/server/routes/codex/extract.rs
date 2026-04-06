@@ -18,8 +18,6 @@ pub(crate) struct CodexPreprocess {
     pub body: OpenaiRequestBody,
     pub ctx: CodexContext,
     pub headers: OpenaiRequestHeaders,
-    /// AHash of `session_id`, used as a routing/cache key to pin a session to the same account.
-    pub route_key: u64,
 }
 
 impl<S> FromRequest<S> for CodexPreprocess
@@ -106,13 +104,13 @@ where
             model: body.model.clone(),
             stream,
             model_mask,
+            route_key: Some(route_key),
         };
 
         Ok(Self {
             body,
             ctx,
             headers: codex_headers,
-            route_key,
         })
     }
 }

@@ -12,9 +12,9 @@ fn default_api_url() -> Url {
 #[serde(deny_unknown_fields)]
 pub struct CodexConfig {
     /// Codex API base URL.
-    /// TOML: `providers.codex.api_url`. Default: `https://chatgpt.com`.
+    /// TOML: `providers.codex.custom_api_url`. Default: `https://chatgpt.com`.
     #[serde(default = "default_api_url")]
-    pub api_url: Url,
+    pub custom_api_url: Url,
 
     /// Optional upstream HTTP proxy. If set, used for reqwest clients.
     /// TOML: `providers.codex.proxy`. Example: `http://127.0.0.1:1080`.
@@ -54,7 +54,7 @@ pub struct CodexConfig {
 
 #[derive(Debug, Clone)]
 pub struct CodexResolvedConfig {
-    pub api_url: Url,
+    pub custom_api_url: Url,
     pub proxy: Option<Url>,
     pub oauth_tps: usize,
     pub model_list: Vec<String>,
@@ -66,7 +66,7 @@ pub struct CodexResolvedConfig {
 impl CodexConfig {
     pub fn resolve(&self, defaults: &ProviderDefaults) -> CodexResolvedConfig {
         CodexResolvedConfig {
-            api_url: self.api_url.clone(),
+            custom_api_url: self.custom_api_url.clone(),
             proxy: self.proxy.clone().or_else(|| defaults.proxy.clone()),
             oauth_tps: self.oauth_tps,
             model_list: self.model_list.clone(),
@@ -85,7 +85,7 @@ impl CodexConfig {
 impl Default for CodexConfig {
     fn default() -> Self {
         Self {
-            api_url: default_api_url(),
+            custom_api_url: default_api_url(),
             proxy: None,
             oauth_tps: default_oauth_tps(),
             model_list: default_model_list(),

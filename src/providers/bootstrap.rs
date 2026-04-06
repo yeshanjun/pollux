@@ -49,7 +49,7 @@ impl Providers {
         );
 
         info!(
-            codex_api_url = %codex_cfg.api_url,
+            codex_custom_api_url = %codex_cfg.custom_api_url,
             codex_proxy = %codex_cfg.proxy.as_ref().map(|u| u.as_str()).unwrap_or("<none>"),
             codex_enable_multiplexing = codex_cfg.enable_multiplexing,
             codex_retry_max_times = codex_cfg.retry_max_times,

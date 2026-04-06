@@ -11,9 +11,9 @@ fn default_api_url() -> Url {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct GeminiCliConfig {
     /// Gemini CLI API base URL.
-    /// TOML: `providers.geminicli.api_url`. Default: `https://cloudcode-pa.googleapis.com`.
+    /// TOML: `providers.geminicli.custom_api_url`. Default: `https://cloudcode-pa.googleapis.com`.
     #[serde(default = "default_api_url")]
-    pub api_url: Url,
+    pub custom_api_url: Url,
 
     /// Optional upstream HTTP proxy. If set, used for reqwest clients.
     /// TOML: `providers.geminicli.proxy`. Example: `http://127.0.0.1:1080`.
@@ -52,7 +52,7 @@ pub struct GeminiCliConfig {
 
 #[derive(Debug, Clone)]
 pub struct GeminiCliResolvedConfig {
-    pub api_url: Url,
+    pub custom_api_url: Url,
     pub proxy: Option<Url>,
     pub oauth_tps: usize,
     pub model_list: Vec<String>,
@@ -64,7 +64,7 @@ pub struct GeminiCliResolvedConfig {
 impl GeminiCliConfig {
     pub fn resolve(&self, defaults: &ProviderDefaults) -> GeminiCliResolvedConfig {
         GeminiCliResolvedConfig {
-            api_url: self.api_url.clone(),
+            custom_api_url: self.custom_api_url.clone(),
             proxy: self.proxy.clone().or_else(|| defaults.proxy.clone()),
             oauth_tps: self.oauth_tps,
             model_list: self.model_list.clone(),
@@ -83,7 +83,7 @@ impl GeminiCliConfig {
 impl Default for GeminiCliConfig {
     fn default() -> Self {
         Self {
-            api_url: default_api_url(),
+            custom_api_url: default_api_url(),
             proxy: None,
             oauth_tps: default_oauth_tps(),
             model_list: default_model_list(),

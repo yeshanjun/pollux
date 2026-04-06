@@ -109,8 +109,8 @@ impl PolluxState {
             "https://cloudcode-pa.googleapis.com".parse().unwrap();
         let codex_default_url: url::Url = "https://chatgpt.com".parse().unwrap();
 
-        let geminicli_has_custom_url = geminicli_cfg.api_url != geminicli_default_url;
-        let codex_has_custom_url = codex_cfg.api_url != codex_default_url;
+        let geminicli_has_custom_url = geminicli_cfg.custom_api_url != geminicli_default_url;
+        let codex_has_custom_url = codex_cfg.custom_api_url != codex_default_url;
 
         let geminicli_client = build_client(
             GOOGLE_AUTH_LIB_USER_AGENT,
@@ -128,7 +128,7 @@ impl PolluxState {
             antigravity_cfg.enable_multiplexing,
         );
 
-        // When a custom api_url is set it acts as a reverse proxy, so the
+        // When a custom_api_url is set it acts as a reverse proxy, so the
         // caller should bypass the configured proxy and connect directly.
         let geminicli_caller_client = if geminicli_has_custom_url {
             build_client(
@@ -147,13 +147,13 @@ impl PolluxState {
 
         let geminicli_caller = GeminiClient::new(
             geminicli_caller_client,
-            geminicli_cfg.api_url.clone(),
+            geminicli_cfg.custom_api_url.clone(),
             geminicli_cfg.retry_max_times,
             geminicli_cfg.trace_header.clone(),
         );
         let codex_caller = CodexClient::new(
             codex_caller_client,
-            codex_cfg.api_url.clone(),
+            codex_cfg.custom_api_url.clone(),
             codex_cfg.retry_max_times,
             codex_cfg.trace_header.clone(),
         );

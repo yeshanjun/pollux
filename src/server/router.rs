@@ -1,7 +1,7 @@
 use crate::providers::Providers;
 use crate::providers::antigravity::ANTIGRAVITY_USER_AGENT;
+use crate::providers::codex::CODEX_USER_AGENT;
 use crate::providers::codex::client::CodexClient;
-use crate::providers::codex::{CODEX_OAUTH_USER_AGENT, CODEX_USER_AGENT};
 use crate::providers::geminicli::client::GeminiClient;
 use crate::providers::geminicli::{GEMINICLI_USER_AGENT, GOOGLE_AUTH_LIB_USER_AGENT};
 use crate::server::guards::auth::RequireKeyAuth;
@@ -71,17 +71,20 @@ impl PolluxState {
         let antigravity_cfg = providers.antigravity_cfg.clone();
 
         fn build_client(
-            user_agent: &str,
+            user_agent: Option<&str>,
             proxy: Option<url::Url>,
             enable_multiplexing: bool,
         ) -> reqwest::Client {
             let mut headers = HeaderMap::new();
 
             let mut builder = reqwest::Client::builder()
-                .user_agent(user_agent)
                 .redirect(reqwest::redirect::Policy::none())
                 .connect_timeout(Duration::from_secs(10))
                 .timeout(Duration::from_secs(10 * 60));
+
+            if let Some(ua) = user_agent {
+                builder = builder.user_agent(ua);
+            }
 
             if let Some(proxy_url) = proxy {
                 let proxy = reqwest::Proxy::all(proxy_url.as_str())
@@ -113,17 +116,16 @@ impl PolluxState {
         let codex_has_custom_url = codex_cfg.custom_api_url != codex_default_url;
 
         let geminicli_client = build_client(
-            GOOGLE_AUTH_LIB_USER_AGENT,
+            Some(GOOGLE_AUTH_LIB_USER_AGENT),
             geminicli_cfg.proxy.clone(),
             geminicli_cfg.enable_multiplexing,
         );
-        let codex_client = build_client(
-            CODEX_OAUTH_USER_AGENT,
-            codex_cfg.proxy.clone(),
-            codex_cfg.enable_multiplexing,
-        );
+        // Codex OAuth client: no User-Agent, matching upstream codex-rs which
+        // uses a bare reqwest::Client::builder() for token exchange.
+        let codex_client =
+            build_client(None, codex_cfg.proxy.clone(), codex_cfg.enable_multiplexing);
         let antigravity_client = build_client(
-            ANTIGRAVITY_USER_AGENT,
+            Some(ANTIGRAVITY_USER_AGENT),
             antigravity_cfg.proxy.clone(),
             antigravity_cfg.enable_multiplexing,
         );
@@ -132,17 +134,22 @@ impl PolluxState {
         // caller should bypass the configured proxy and connect directly.
         let geminicli_caller_client = if geminicli_has_custom_url {
             build_client(
-                GEMINICLI_USER_AGENT,
+                Some(GEMINICLI_USER_AGENT),
                 None,
                 geminicli_cfg.enable_multiplexing,
             )
         } else {
             geminicli_client.clone()
         };
+        // API caller always uses the full Codex UA regardless of custom URL.
         let codex_caller_client = if codex_has_custom_url {
-            build_client(CODEX_USER_AGENT, None, codex_cfg.enable_multiplexing)
+            build_client(Some(CODEX_USER_AGENT), None, codex_cfg.enable_multiplexing)
         } else {
-            codex_client.clone()
+            build_client(
+                Some(CODEX_USER_AGENT),
+                codex_cfg.proxy.clone(),
+                codex_cfg.enable_multiplexing,
+            )
         };
 
         let geminicli_caller = GeminiClient::new(

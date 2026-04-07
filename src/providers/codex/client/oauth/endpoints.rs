@@ -35,6 +35,8 @@ pub(crate) static DEFAULT_SCOPES: LazyLock<Vec<Scope>> = LazyLock::new(|| {
         Scope::new("profile".to_string()),
         Scope::new("email".to_string()),
         Scope::new("offline_access".to_string()),
+        Scope::new("api.connectors.read".to_string()),
+        Scope::new("api.connectors.invoke".to_string()),
     ]
 });
 

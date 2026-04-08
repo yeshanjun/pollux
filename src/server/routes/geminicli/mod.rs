@@ -12,6 +12,7 @@ use resource::geminicli_resource_add;
 
 use axum::{
     Router,
+    extract::DefaultBodyLimit,
     routing::{get, post},
 };
 use std::sync::LazyLock;
@@ -33,6 +34,11 @@ pub fn router() -> Router<PolluxState> {
             "/geminicli/v1beta/openai/models",
             get(gemini_openai_models_handler),
         )
-        .route("/geminicli/v1beta/models/{*path}", post(gemini_cli_handler))
+        .route(
+            "/geminicli/v1beta/models/{*path}",
+            post(gemini_cli_handler).layer(DefaultBodyLimit::max(
+                crate::server::DEFAULT_API_BODY_LIMIT_BYTES,
+            )),
+        )
         .route("/geminicli/resource:add", post(geminicli_resource_add))
 }

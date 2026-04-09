@@ -8,10 +8,6 @@ struct GeminiPartPatch<'a>(&'a mut Part);
 
 impl Patchable for GeminiPartPatch<'_> {
     fn data(&self) -> PatchEvent<'_> {
-        if let Some(function_call) = self.0.function_call.as_ref() {
-            return PatchEvent::FunctionCall(function_call);
-        }
-
         if self.0.thought == Some(true) {
             if let Some(text) = self.0.text.as_deref() {
                 return PatchEvent::ThoughtText(text);
@@ -136,48 +132,7 @@ mod tests {
     }
 
     #[test]
-    fn patch_request_uses_cached_signature_for_function_call() {
-        let (patcher, engine) = drop_patcher_with_engine();
-        let function_call = json!({
-            "name": "get_weather",
-            "args": {
-                "city": "Berlin",
-                "unit": "c"
-            }
-        });
-        let key =
-            CacheKeyGenerator::generate_json(&function_call).expect("function call key must exist");
-        engine.put_signature(key, Arc::from("sig_fn_001"));
-
-        let mut request = parse_request(json!({
-            "contents": [
-                {
-                    "role": "model",
-                    "parts": [
-                        {
-                            "functionCall": {
-                                "args": {
-                                    "unit": "c",
-                                    "city": "Berlin"
-                                },
-                                "name": "get_weather"
-                            }
-                        }
-                    ]
-                }
-            ]
-        }));
-
-        patch_request(&mut request, &patcher);
-
-        assert_eq!(
-            request.contents[0].parts[0].thought_signature.as_deref(),
-            Some("sig_fn_001")
-        );
-    }
-
-    #[test]
-    fn patch_request_drops_function_call_on_cache_miss() {
+    fn patch_request_skips_function_call_parts() {
         let patcher = drop_patcher();
         let mut request = parse_request(json!({
             "contents": [
@@ -198,7 +153,8 @@ mod tests {
         }));
 
         patch_request(&mut request, &patcher);
-        assert!(request.contents[0].parts.is_empty());
+        assert_eq!(request.contents[0].parts.len(), 1);
+        assert!(request.contents[0].parts[0].thought_signature.is_none());
     }
 
     #[test]

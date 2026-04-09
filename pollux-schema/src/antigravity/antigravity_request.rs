@@ -2,9 +2,8 @@
 //!
 //! Antigravity uses a wrapper payload around Gemini's generate-content request.
 
-use crate::gemini::{Content, GeminiGenerateContentRequest, Part};
+use crate::gemini::GeminiGenerateContentRequest;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 
 /// Runtime metadata needed to wrap a Gemini request into
 /// Antigravity's upstream envelope.
@@ -30,32 +29,6 @@ impl AntigravityRequestMeta {
     }
 }
 
-impl AntigravityRequestBody {
-    /// Blindly prepend text to the embedded Gemini `systemInstruction`.
-    ///
-    /// This method does not perform marker/dedup checks. If an existing
-    /// `systemInstruction` first text part exists, `prefix` is prepended with
-    /// a newline; otherwise `prefix` becomes the full instruction.
-    pub fn prepend_system_instruction(&mut self, prefix: &str) {
-        let system_instruction = self.request.system_instruction_mut();
-        let next_text = system_instruction
-            .as_ref()
-            .and_then(|content| content.parts.first().and_then(|part| part.text.as_deref()))
-            .map(|text| format!("{prefix}\n{text}"))
-            .unwrap_or_else(|| prefix.to_string());
-
-        let next = Content {
-            role: None,
-            parts: vec![Part {
-                text: Some(next_text),
-                ..Part::default()
-            }],
-            extra: BTreeMap::new(),
-        };
-
-        *system_instruction = Some(next);
-    }
-}
 
 /// Antigravity upstream request envelope.
 ///
@@ -154,50 +127,4 @@ mod tests {
         assert_eq!(body.model, "claude-sonnet-4-5-thinking");
     }
 
-    #[test]
-    fn prepend_system_instruction_sets_instruction_when_missing() {
-        let request: GeminiGenerateContentRequest = serde_json::from_value(json!({
-            "contents": []
-        }))
-        .unwrap();
-
-        let mut body = AntigravityRequestMeta {
-            project: "project-1".to_string(),
-            request_id: "agent/1/00000000-0000-4000-8000-000000000000".to_string(),
-            model: "claude-sonnet-4-5-thinking".to_string(),
-        }
-        .into_request(request);
-
-        body.prepend_system_instruction("PREAMBLE");
-
-        let si = body.request.system_instruction.as_ref().unwrap();
-        assert!(si.role.is_none());
-        assert_eq!(si.parts[0].text.as_deref(), Some("PREAMBLE"));
-    }
-
-    #[test]
-    fn prepend_system_instruction_is_blind_and_can_duplicate() {
-        let request: GeminiGenerateContentRequest = serde_json::from_value(json!({
-            "contents": [],
-            "systemInstruction": {"parts": [{"text": "PREAMBLE\nexisting"}]}
-        }))
-        .unwrap();
-
-        let mut body = AntigravityRequestMeta {
-            project: "project-1".to_string(),
-            request_id: "agent/1/00000000-0000-4000-8000-000000000000".to_string(),
-            model: "claude-sonnet-4-5-thinking".to_string(),
-        }
-        .into_request(request);
-
-        body.prepend_system_instruction("PREAMBLE");
-
-        let text = body
-            .request
-            .system_instruction
-            .as_ref()
-            .and_then(|si| si.parts.first())
-            .and_then(|part| part.text.as_deref());
-        assert_eq!(text, Some("PREAMBLE\nPREAMBLE\nexisting"));
-    }
 }

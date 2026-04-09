@@ -35,7 +35,6 @@ pub struct AntigravityClient {
     client: reqwest::Client,
     retry_policy: ExponentialBuilder,
     endpoints: ProviderEndpoints,
-    claude_system_preamble: String,
 }
 
 impl AntigravityClient {
@@ -57,7 +56,6 @@ impl AntigravityClient {
             client,
             retry_policy,
             endpoints,
-            claude_system_preamble: cfg.claude_system_preamble.clone(),
         }
     }
 
@@ -92,11 +90,9 @@ impl AntigravityClient {
         let model_mask = ctx.model_mask;
         let path = ctx.path.clone();
         let gemini_request = body.clone();
-        let claude_system_preamble = self.claude_system_preamble.clone();
 
         let op = {
             let gemini_request = gemini_request.clone();
-            let claude_system_preamble = claude_system_preamble.clone();
             move || {
                 let handle = handle.clone();
                 let client = client.clone();
@@ -104,7 +100,6 @@ impl AntigravityClient {
                 let gemini_request = gemini_request.clone();
                 let model = model.clone();
                 let path = path.clone();
-                let claude_system_preamble = claude_system_preamble.clone();
                 async move {
                     let start = Instant::now();
                     let assigned = handle
@@ -134,8 +129,6 @@ impl AntigravityClient {
                     .into_request(gemini_request.clone());
 
                     Self::apply_claude_thinking_defaults(model.as_str(), &mut payload.request);
-
-                    payload.prepend_system_instruction(claude_system_preamble.as_str());
 
                     payload
                         .request

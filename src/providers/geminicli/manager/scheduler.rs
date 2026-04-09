@@ -61,10 +61,34 @@ pub struct AssignmentResult {
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct CooldownTicket(Reverse<Instant>, CredentialId, ModelIndex);
 
+#[derive(Debug, Default, Clone)]
+struct ModelQueue {
+    order: VecDeque<CredentialId>,
+    members: HashSet<CredentialId>,
+}
+
+impl ModelQueue {
+    fn push_back(&mut self, id: CredentialId) {
+        if self.members.insert(id) {
+            self.order.push_back(id);
+        }
+    }
+
+    fn pop_front(&mut self) -> Option<CredentialId> {
+        let id = self.order.pop_front()?;
+        self.members.remove(&id);
+        Some(id)
+    }
+
+    fn len(&self) -> usize {
+        self.order.len()
+    }
+}
+
 /// Core scheduling logic for credentials (no IO, no locks).
 pub struct CredentialManager {
     creds: HashMap<CredentialId, RuntimeCredential>,
-    queues: Vec<VecDeque<CredentialId>>,
+    queues: Vec<ModelQueue>,
     waiting_room: BinaryHeap<CooldownTicket>,
     cooldown_map: HashMap<(CredentialId, ModelIndex), Instant>,
     refreshing: HashSet<CredentialId>,
@@ -80,7 +104,7 @@ impl CredentialManager {
     pub fn new(model_count: usize) -> Self {
         Self {
             creds: HashMap::new(),
-            queues: vec![VecDeque::new(); model_count],
+            queues: vec![ModelQueue::default(); model_count],
             waiting_room: BinaryHeap::new(),
             cooldown_map: HashMap::new(),
             refreshing: HashSet::new(),
@@ -108,9 +132,7 @@ impl CredentialManager {
                 continue;
             }
 
-            if !queue.contains(&id) {
-                queue.push_back(id);
-            }
+            queue.push_back(id);
         }
     }
 
@@ -187,13 +209,17 @@ impl CredentialManager {
 
         result.stats = SchedulerStats {
             total_creds: self.creds.len(),
-            queue_len: self.queues.get(model_index).map_or(0, |q| q.len()),
+            queue_len: self.queues.get(model_index).map_or(0, ModelQueue::len),
             refreshing: self.refreshing.len(),
             cooldowns: self.cooldown_map.len(),
             ..Default::default()
         };
 
-        while let Some(id) = self.queues.get_mut(model_index).and_then(|q| q.pop_front()) {
+        while let Some(id) = self
+            .queues
+            .get_mut(model_index)
+            .and_then(ModelQueue::pop_front)
+        {
             let status = self.check_lease(id, model_index);
             match status {
                 LeaseStatus::Ready(lease) => {
@@ -258,9 +284,7 @@ impl CredentialManager {
                     if ticket_deadline >= *entry.get() =>
                 {
                     let ((reclaimed_cred_id, reclaimed_model_index), _) = entry.remove_entry();
-                    if let Some(target_queue) = self.queues.get_mut(reclaimed_model_index)
-                        && !target_queue.contains(&reclaimed_cred_id)
-                    {
+                    if let Some(target_queue) = self.queues.get_mut(reclaimed_model_index) {
                         target_queue.push_back(reclaimed_cred_id);
                     }
                 }

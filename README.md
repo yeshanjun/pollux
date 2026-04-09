@@ -2,19 +2,12 @@
 
 Pollux is a headless, actor-driven Rust reverse proxy that orchestrates AI resources. It serves as a microsecond-level scheduler, transforming raw credential resources into standard Gemini & OpenAI interfaces.
 
-Today it ships with two providers:
-
-- **Gemini CLI (Cloud Code)** → exposes the **Gemini v1beta** API surface (`/geminicli/v1beta/models`, `/geminicli/v1beta/models/{model}:generateContent`, `/geminicli/v1beta/models/{model}:streamGenerateContent`)
-- **Codex (ChatGPT backend)** → exposes an **OpenAI Responses API–compatible** surface (`/codex/v1/responses`, `/codex/v1/models`)
-
-It is designed to be **stateless at the edge** and **stateful in SQLite**: credentials can be
-ingested dynamically, persisted, and scheduled without restarts.
+It is designed to be **stateless at the edge** and **stateful in SQLite**
 
 ## Highlights
 
-- **Protocol standardization**: Gemini v1beta + OpenAI Responses API (Codex) behind one service.
 - **Actor-based scheduling**: built on `ractor` to keep the hot path lock-free.
-- **Credential pool & rotation**: retries, rotation on upstream errors, and queue-based scheduling.
+- **Resources pool & rotation**: retries, rotation on upstream errors, and queue-based scheduling.
 - **Streaming support**: SSE passthrough for both Gemini streaming and Codex streaming.
 - **Single binary / Docker**: runs as a small container or `cargo run`.
 
@@ -34,31 +27,6 @@ Recommended usage (to avoid confusion):
 - **Gemini CLI endpoints** (`/geminicli/*`): prefer `?key=<pollux_key>`
 
 OAuth entry/callback endpoints do **not** require the key.
-
-## API Surface
-
-### Gemini (Gemini CLI provider)
-
-| Endpoint                                                 | Method | Auth | Description                                           |
-| :------------------------------------------------------- | :----- | :--- | :---------------------------------------------------- |
-| `/geminicli/v1beta/models`                               | `GET`  | ✅   | List supported Gemini models.                         |
-| `/geminicli/v1beta/openai/models`                        | `GET`  | ✅   | List the same models in OpenAI-style `models` format. |
-| `/geminicli/v1beta/models/{model}:generateContent`       | `POST` | ✅   | Unary generateContent.                                |
-| `/geminicli/v1beta/models/{model}:streamGenerateContent` | `POST` | ✅   | Streaming generateContent (SSE).                      |
-| `/geminicli/resource:add`                                | `POST` | ✅   | Ingest Gemini CLI refresh tokens (0-trust, batch).    |
-| `/geminicli/auth`                                        | `GET`  | ❌   | Start Google OAuth (Gemini CLI flow).                 |
-| `/oauth2callback`                                        | `GET`  | ❌   | Google OAuth callback handler.                        |
-
-### Codex (OpenAI Responses API–compatible)
-
-| Endpoint               | Method | Auth | Description                                                        |
-| :--------------------- | :----- | :--- | :----------------------------------------------------------------- |
-| `/codex/v1/models`     | `GET`  | ✅   | List supported Codex models.                                       |
-| `/codex/v1/responses`  | `POST` | ✅   | OpenAI Responses API–compatible request/streaming response.        |
-| `/codex/resource:add`  | `POST` | ✅   | Ingest Codex refresh tokens (0-trust, batch).                      |
-| `/codex/auth`          | `GET`  | ❌   | Start OpenAI OAuth (Codex CLI flow).                               |
-| `/auth/callback`       | `GET`  | ❌   | Codex OAuth callback handler (same handler as Codex CLI redirect). |
-| `/codex/auth/callback` | `GET`  | ❌   | Alias of `/auth/callback`.                                         |
 
 ## Quick Start
 
@@ -148,4 +116,4 @@ curl -X POST "http://localhost:8188/codex/resource:add" \
 
 ## License
 
-See `LICENSE`. This project is licensed under the GNU Affero General Public License v3.0.
+See [LICENSE](./LICENSE). This project is licensed under the GNU Affero General Public License v3.0.

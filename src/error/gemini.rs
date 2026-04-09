@@ -360,9 +360,9 @@ pub enum RateLimitVariant {
 impl std::fmt::Display for RateLimitVariant {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::QuotaCooldown(secs) => write!(f, "cooldown({secs}s)"),
-            Self::CapacityPressure => f.write_str("pvp"),
-            Self::RiskControl => f.write_str("risk"),
+            Self::QuotaCooldown(secs) => write!(f, "quota_cooldown({secs}s)"),
+            Self::CapacityPressure => f.write_str("capacity_pressure"),
+            Self::RiskControl => f.write_str("risk_control"),
         }
     }
 }
@@ -425,7 +425,9 @@ impl MappingAction for GeminiCliErrorBody {
                     RateLimitVariant::QuotaCooldown(secs) => {
                         ActionForError::RateLimit(Duration::from_secs(secs.max(1)))
                     }
-                    RateLimitVariant::CapacityPressure => ActionForError::None,
+                    RateLimitVariant::CapacityPressure => {
+                        ActionForError::RateLimit(Duration::from_secs(5))
+                    }
                     RateLimitVariant::RiskControl => {
                         let secs = rand::rng().random_range(45 * 60..=60 * 60);
                         ActionForError::RateLimit(Duration::from_secs(secs))
@@ -518,7 +520,7 @@ mod tests {
         );
         assert_eq!(
             parsed.try_match_rule(StatusCode::TOO_MANY_REQUESTS),
-            Some(ActionForError::None)
+            Some(ActionForError::RateLimit(Duration::from_secs(5)))
         );
     }
 
@@ -582,7 +584,7 @@ mod tests {
         );
         assert_eq!(
             parsed.try_match_rule(StatusCode::TOO_MANY_REQUESTS),
-            Some(ActionForError::None)
+            Some(ActionForError::RateLimit(Duration::from_secs(5)))
         );
     }
 

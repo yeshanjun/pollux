@@ -258,7 +258,7 @@ mod tests {
         assert_eq!(map.get("authorization").unwrap(), "Bearer at-test");
         assert_eq!(map.get("chatgpt-account-id").unwrap(), "acct-test");
         assert_eq!(map.get("session_id").unwrap(), "sid-456");
-        assert_eq!(map.get("originator").unwrap(), "codex_cli_rs");
+        assert_eq!(map.get("originator").unwrap(), DEFAULT_ORIGINATOR);
 
         // x-codex-turn-metadata should be forwarded as serialized JSON.
         let meta_value = map.get("x-codex-turn-metadata").unwrap().to_str().unwrap();

@@ -10,7 +10,8 @@ use crate::providers::geminicli::client::oauth::endpoints::GoogleTokenResponse;
 use crate::providers::geminicli::client::oauth::utils::attach_email_from_id_token;
 use crate::providers::geminicli::resource::GeminiCliResource;
 use crate::providers::geminicli::workers::{
-    GeminiCliRefresherHandle, RefreshError, RefreshJob, RefreshResult, TaskType,
+    CredentialJob, CredentialJobKind, CredentialProcessError, CredentialProcessResult,
+    GeminiCliOauthWorkerHandle,
 };
 use crate::providers::geminicli::{SUPPORTED_MODEL_MASK, SUPPORTED_MODEL_NAMES};
 use crate::providers::manifest::{GeminiCliLease, GeminiCliProfile};
@@ -60,7 +61,7 @@ pub enum GeminiCliActorMessage {
 
     // Internal messages (sent by the actor itself)
     /// Token refresh has completed; update stored credential and re-enqueue if ok.
-    RefreshComplete { result: RefreshResult },
+    ProcessComplete { result: CredentialProcessResult },
     /// A credential has been refreshed and stored; activate it in memory queues.
     ActivateCredential {
         id: CredentialId,
@@ -144,15 +145,15 @@ impl GeminiCliActorHandle {
         );
     }
 
-    pub(in crate::providers::geminicli) fn send_refresh_complete(
+    pub(in crate::providers::geminicli) fn send_process_complete(
         &self,
-        result: RefreshResult,
+        result: CredentialProcessResult,
     ) -> Result<(), PolluxError> {
         ractor::cast!(
             self.actor,
-            GeminiCliActorMessage::RefreshComplete { result }
+            GeminiCliActorMessage::ProcessComplete { result }
         )
-        .map_err(|e| PolluxError::RactorError(format!("RefreshComplete cast failed: {e}")))
+        .map_err(|e| PolluxError::RactorError(format!("ProcessComplete cast failed: {e}")))
     }
 }
 
@@ -161,7 +162,7 @@ struct GeminiCliActorState {
     ops: CredentialOps,
     manager: CredentialManager,
     model_caps_all: u64,
-    refresh_handle: GeminiCliRefresherHandle,
+    processor_handle: GeminiCliOauthWorkerHandle,
 }
 
 /// ractor-based Gemini CLI actor.
@@ -179,7 +180,7 @@ impl Actor for GeminiCliActor {
         args: Self::Arguments,
     ) -> Result<Self::State, ActorProcessingErr> {
         let (ops, cfg) = args;
-        let refresh_handle = GeminiCliRefresherHandle::spawn(
+        let processor_handle = GeminiCliOauthWorkerHandle::spawn(
             GeminiCliActorHandle {
                 actor: _myself.clone(),
             },
@@ -225,7 +226,7 @@ impl Actor for GeminiCliActor {
             ops,
             manager,
             model_caps_all,
-            refresh_handle,
+            processor_handle,
         })
     }
 
@@ -269,8 +270,8 @@ impl Actor for GeminiCliActor {
             GeminiCliActorMessage::SubmitUntrustedSeeds(seeds) => {
                 self.handle_submit_untrusted_seeds(state, seeds).await;
             }
-            GeminiCliActorMessage::RefreshComplete { result } => {
-                self.handle_refresh_complete(myself.clone(), state, result)
+            GeminiCliActorMessage::ProcessComplete { result } => {
+                self.handle_process_complete(myself.clone(), state, result)
                     .await;
             }
             GeminiCliActorMessage::ActivateCredential { id, credential } => {
@@ -419,18 +420,18 @@ impl GeminiCliActor {
         if jobs_to_send.is_empty() {
             return;
         }
-        let refresh_handle = state.refresh_handle.clone();
+        let processor_handle = state.processor_handle.clone();
 
         for (id, cred) in jobs_to_send {
-            let task = RefreshJob {
+            let task = CredentialJob {
                 cred,
-                r#type: TaskType::Refresh(id),
+                kind: CredentialJobKind::Refresh(id),
             };
-            if let Err(e) = refresh_handle.submit_refresh(task.clone()) {
+            if let Err(e) = processor_handle.submit(task.clone()) {
                 warn!("ID: {id} Batch refresh enqueue failed. Rolling back.");
 
-                let _ = myself.cast(GeminiCliActorMessage::RefreshComplete {
-                    result: Err(RefreshError {
+                let _ = myself.cast(GeminiCliActorMessage::ProcessComplete {
+                    result: Err(CredentialProcessError {
                         original_job: task,
                         error: PolluxError::RactorError(format!(
                             "Failed to enqueue refresh job: {e}"
@@ -475,16 +476,16 @@ impl GeminiCliActor {
     ) {
         let count = creds_vec.len();
         info!(count, "Batch submit received, dispatching...");
-        let refresh_handle = state.refresh_handle.clone();
+        let processor_handle = state.processor_handle.clone();
         tokio::spawn(async move {
             for profile in creds_vec {
                 let pid = profile.project_id.to_string();
                 let cred = GeminiCliResource::from(profile);
-                let job = RefreshJob {
+                let job = CredentialJob {
                     cred,
-                    r#type: TaskType::Onboard,
+                    kind: CredentialJobKind::Ingest,
                 };
-                if let Err(e) = refresh_handle.submit_onboard(job) {
+                if let Err(e) = processor_handle.submit(job) {
                     warn!(
                         "Project: {pid}, failed to enqueue onboarding refresh: {}",
                         e
@@ -501,7 +502,7 @@ impl GeminiCliActor {
         token_response: GoogleTokenResponse,
     ) {
         info!("Trusted OAuth submit received, dispatching onboarding...");
-        let refresh_handle = state.refresh_handle.clone();
+        let processor_handle = state.processor_handle.clone();
         tokio::spawn(async move {
             let mut token_value = match serde_json::to_value(&token_response) {
                 Ok(v) => v,
@@ -517,11 +518,11 @@ impl GeminiCliActor {
                 warn!("Trusted OAuth submit ignored: token JSON error: {e}");
                 return;
             }
-            let job = RefreshJob {
+            let job = CredentialJob {
                 cred,
-                r#type: TaskType::Onboard,
+                kind: CredentialJobKind::Ingest,
             };
-            if let Err(e) = refresh_handle.submit_onboard(job) {
+            if let Err(e) = processor_handle.submit(job) {
                 warn!("Trusted OAuth submit enqueue failed: {}", e);
             }
         });
@@ -537,7 +538,7 @@ impl GeminiCliActor {
             count,
             "0-trust seed submit received, dispatching onboarding..."
         );
-        let refresh_handle = state.refresh_handle.clone();
+        let processor_handle = state.processor_handle.clone();
         tokio::spawn(async move {
             for seed in seeds {
                 let mut cred = GeminiCliResource::default();
@@ -548,11 +549,11 @@ impl GeminiCliActor {
                     continue;
                 }
 
-                let job = RefreshJob {
+                let job = CredentialJob {
                     cred,
-                    r#type: TaskType::Onboard,
+                    kind: CredentialJobKind::Ingest,
                 };
-                if let Err(e) = refresh_handle.submit_onboard(job) {
+                if let Err(e) = processor_handle.submit(job) {
                     warn!("0-trust seed enqueue failed: {}", e);
                     break;
                 }
@@ -560,16 +561,16 @@ impl GeminiCliActor {
         });
     }
 
-    async fn handle_refresh_complete(
+    async fn handle_process_complete(
         &self,
         myself: ActorRef<GeminiCliActorMessage>,
         state: &mut GeminiCliActorState,
-        result: RefreshResult,
+        result: CredentialProcessResult,
     ) {
         // If the result is for a refresh task, check if the credential is still in refreshing state.
         if let Some(id) = match &result {
-            Ok(success) => &success.r#type,
-            Err(failed) => &failed.original_job.r#type,
+            Ok(success) => &success.kind,
+            Err(failed) => &failed.original_job.kind,
         }
         .credential_id()
             && !state.manager.is_refreshing(id)
@@ -583,8 +584,8 @@ impl GeminiCliActor {
             Ok(success) => {
                 let pid = success.cred.project_id().to_string();
                 let cred = success.cred;
-                match success.r#type {
-                    TaskType::Refresh(id) => {
+                match success.kind {
+                    CredentialJobKind::Refresh(id) => {
                         state
                             .manager
                             .add_credential(id, cred.clone(), state.model_caps_all);
@@ -601,7 +602,7 @@ impl GeminiCliActor {
                             }
                         });
                     }
-                    TaskType::Onboard => {
+                    CredentialJobKind::Ingest => {
                         info!("Project: {pid} Onboard success. Inserting to DB.");
                         let ops = state.ops.clone();
                         let myself = myself.clone();
@@ -629,8 +630,8 @@ impl GeminiCliActor {
                 let err = failed.error;
                 let pid = job.cred.project_id().to_string();
                 warn!("RefreshTask failed for project {}: {}", pid, err);
-                match job.r#type {
-                    TaskType::Refresh(id) => match err {
+                match job.kind {
+                    CredentialJobKind::Refresh(id) => match err {
                         PolluxError::Oauth(OauthError::ServerResponse { .. }) => {
                             error!("ID: {id} Refresh failed: {}. Removing.", err);
 
@@ -652,7 +653,7 @@ impl GeminiCliActor {
                                 .add_credential(id, job.cred, state.model_caps_all);
                         }
                     },
-                    TaskType::Onboard => {
+                    CredentialJobKind::Ingest => {
                         warn!(
                             "Project: {} Onboard failed: {}. Discarding.",
                             job.cred.project_id(),

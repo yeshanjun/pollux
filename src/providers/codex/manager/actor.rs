@@ -169,15 +169,13 @@ struct CodexActor;
 impl Actor for CodexActor {
     type Msg = CodexActorMessage;
     type State = CodexActorState;
-    type Arguments = (crate::db::DbActorHandle, Arc<CodexResolvedConfig>);
+    type Arguments = (CredentialOps, Arc<CodexResolvedConfig>);
 
     async fn pre_start(
         &self,
         myself: ActorRef<Self::Msg>,
-        (db, cfg): Self::Arguments,
+        (ops, cfg): Self::Arguments,
     ) -> Result<Self::State, ActorProcessingErr> {
-        let ops = CredentialOps::new(db);
-
         let processor_handle = CodexOauthWorkerHandle::spawn(
             CodexActorHandle {
                 actor: myself.clone(),
@@ -645,7 +643,9 @@ pub(in crate::providers) async fn spawn(
     db: crate::db::DbActorHandle,
     cfg: Arc<CodexResolvedConfig>,
 ) -> CodexActorHandle {
-    let (actor, _jh) = ractor::Actor::spawn(Some("CodexMain".to_string()), CodexActor, (db, cfg))
+    let ops = CredentialOps::new(db);
+
+    let (actor, _jh) = ractor::Actor::spawn(Some("CodexMain".to_string()), CodexActor, (ops, cfg))
         .await
         .expect("failed to spawn CodexActor");
 

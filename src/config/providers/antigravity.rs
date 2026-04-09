@@ -47,7 +47,6 @@ pub struct AntigravityConfig {
     /// Falls back to `providers.defaults.retry_max_times`.
     #[serde(default)]
     pub retry_max_times: Option<usize>,
-
 }
 
 #[derive(Debug, Clone)]
@@ -144,4 +143,3 @@ fn default_oauth_scopes() -> Vec<String> {
         "https://www.googleapis.com/auth/experimentsandconfigs".to_string(),
     ]
 }
-

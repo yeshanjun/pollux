@@ -7,6 +7,7 @@ pub mod respond;
 use crate::server::router::PolluxState;
 use axum::{
     Router,
+    extract::DefaultBodyLimit,
     routing::{get, post},
 };
 
@@ -23,5 +24,8 @@ pub fn router() -> Router<PolluxState> {
             "/antigravity/v1beta/models/{*path}",
             post(antigravity_proxy_handler),
         )
+        .layer(DefaultBodyLimit::max(
+            crate::server::DEFAULT_API_BODY_LIMIT_BYTES,
+        ))
         .route("/antigravity/resource:add", post(antigravity_resource_add))
 }

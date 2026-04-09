@@ -5,8 +5,8 @@ use crate::error::{OauthError, PolluxError};
 use crate::model_catalog::MODEL_REGISTRY;
 use crate::oauth_utils::OauthTokenResponse;
 use crate::providers::antigravity::resource::AntigravityResource;
-use crate::providers::antigravity::workers::refresher::{
-    AntigravityRefreshTokenSeed, RefreshOutcome,
+use crate::providers::antigravity::workers::{
+    AntigravityOauthWorkerHandle, AntigravityRefreshTokenSeed, RefreshOutcome,
 };
 use crate::providers::manifest::AntigravityLease;
 use crate::providers::traits::scheduler::{CredentialId, ResourceScheduler};
@@ -108,6 +108,17 @@ impl AntigravityActorHandle {
         );
     }
 
+    pub(in crate::providers::antigravity) fn send_refresh_complete(
+        &self,
+        outcome: RefreshOutcome,
+    ) -> Result<(), PolluxError> {
+        ractor::cast!(
+            self.actor,
+            AntigravityActorMessage::RefreshComplete { outcome }
+        )
+        .map_err(|e| PolluxError::RactorError(format!("RefreshComplete cast failed: {e}")))
+    }
+
     /// Submit refresh tokens as 0-trust seeds.
     pub(crate) async fn submit_refresh_tokens(&self, refresh_tokens: Vec<String>) {
         let seeds: Vec<AntigravityRefreshTokenSeed> = refresh_tokens
@@ -131,7 +142,7 @@ struct AntigravityActorState {
     ops: CredentialOps,
     manager: ResourceScheduler<AntigravityResource>,
     provider_supported_mask: u64,
-    refresh_handle: crate::providers::antigravity::workers::refresher::AntigravityRefresherHandle,
+    processor_handle: AntigravityOauthWorkerHandle,
 }
 
 struct AntigravityActor;
@@ -176,23 +187,19 @@ impl Actor for AntigravityActor {
             model_count, "AntigravityActor started from DB"
         );
 
-        // Spawn refresher pipeline and wire outcomes back into this actor.
-        let (refresh_handle, mut out_rx) =
-            crate::providers::antigravity::workers::refresher::spawn_pipeline(cfg.clone());
-        tokio::spawn({
-            let myself = myself.clone();
-            async move {
-                while let Some(outcome) = out_rx.recv().await {
-                    let _ = myself.cast(AntigravityActorMessage::RefreshComplete { outcome });
-                }
-            }
-        });
+        let processor_handle = AntigravityOauthWorkerHandle::spawn(
+            AntigravityActorHandle {
+                actor: myself.clone(),
+            },
+            cfg.clone(),
+        )
+        .await?;
 
         Ok(AntigravityActorState {
             ops,
             manager,
             provider_supported_mask,
-            refresh_handle,
+            processor_handle,
         })
     }
 
@@ -380,21 +387,19 @@ impl AntigravityActor {
             return;
         }
 
-        let refresh_handle = state.refresh_handle.clone();
-        tokio::spawn(async move {
-            for (id, refresh_token) in jobs_to_send {
-                if let Err(e) = refresh_handle.submit_refresh(id, refresh_token).await {
-                    warn!(id, "Antigravity refresh enqueue failed: {}", e);
-                    let _ = myself.cast(AntigravityActorMessage::RefreshComplete {
-                        outcome: RefreshOutcome::RefreshCredential {
-                            id,
-                            patch: AntigravityPatch::default(),
-                            result: Err(e),
-                        },
-                    });
-                }
+        let processor_handle = state.processor_handle.clone();
+        for (id, refresh_token) in jobs_to_send {
+            if let Err(e) = processor_handle.submit_refresh(id, refresh_token) {
+                warn!(id, "Antigravity refresh enqueue failed: {}", e);
+                let _ = myself.cast(AntigravityActorMessage::RefreshComplete {
+                    outcome: RefreshOutcome::RefreshCredential {
+                        id,
+                        patch: AntigravityPatch::default(),
+                        result: Err(e),
+                    },
+                });
             }
-        });
+        }
     }
 
     async fn handle_report_baned(&self, state: &mut AntigravityActorState, id: CredentialId) {
@@ -432,12 +437,9 @@ impl AntigravityActor {
         };
 
         info!("Trusted OAuth submit received, dispatching seed onboarding...");
-        let refresh_handle = state.refresh_handle.clone();
-        tokio::spawn(async move {
-            if let Err(e) = refresh_handle.submit_onboard_seed(seed).await {
-                warn!("Trusted OAuth seed enqueue failed: {}", e);
-            }
-        });
+        if let Err(e) = state.processor_handle.submit_onboard_seed(seed) {
+            warn!("Trusted OAuth seed enqueue failed: {}", e);
+        }
     }
 
     async fn handle_submit_untrusted_seeds(
@@ -450,15 +452,12 @@ impl AntigravityActor {
             count,
             "0-trust seed submit received, dispatching onboarding..."
         );
-        let refresh_handle = state.refresh_handle.clone();
-        tokio::spawn(async move {
-            for seed in seeds {
-                if let Err(e) = refresh_handle.submit_onboard_seed(seed).await {
-                    warn!("0-trust seed enqueue failed: {}", e);
-                    break;
-                }
+        for seed in seeds {
+            if let Err(e) = state.processor_handle.submit_onboard_seed(seed) {
+                warn!("0-trust seed enqueue failed: {}", e);
+                break;
             }
-        });
+        }
     }
 
     async fn handle_refresh_complete(

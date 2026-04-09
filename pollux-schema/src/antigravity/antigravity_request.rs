@@ -29,7 +29,6 @@ impl AntigravityRequestMeta {
     }
 }
 
-
 /// Antigravity upstream request envelope.
 ///
 /// All fields are required.
@@ -126,5 +125,4 @@ mod tests {
         assert_eq!(body.project, "project-1");
         assert_eq!(body.model, "claude-sonnet-4-5-thinking");
     }
-
 }

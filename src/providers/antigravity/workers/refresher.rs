@@ -1,6 +1,7 @@
 use crate::config::AntigravityResolvedConfig;
 use crate::db::{AntigravityCreate, AntigravityPatch};
 use crate::error::{OauthError, PolluxError};
+use crate::providers::antigravity::AntigravityActorHandle;
 use crate::providers::antigravity::client::oauth::{
     endpoints::AntigravityOauthEndpoints,
     ops::{AntigravityOauthOps, LoadCodeAssistResponse},
@@ -9,6 +10,7 @@ use chrono::{Duration as ChronoDuration, Utc};
 use futures::stream::StreamExt;
 use governor::{Quota, RateLimiter};
 use oauth2::TokenResponse;
+use ractor::{Actor, ActorProcessingErr, ActorRef};
 use reqwest::header::{CONNECTION, HeaderMap, HeaderValue};
 use serde::Deserialize;
 use serde_json::Value;
@@ -89,90 +91,72 @@ impl RefreshTask {
     }
 }
 
-/// Handle for submitting refresh/onboarding tasks.
-#[derive(Clone, Debug)]
-pub(crate) struct AntigravityRefresherHandle {
+// ---------------------------------------------------------------------------
+// Actor-based worker (mirrors geminicli's GeminiCliOauthWorkerActor)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug)]
+struct AntigravityOauthWorkerMessage(RefreshTask);
+
+struct AntigravityOauthWorkerState {
     job_tx: mpsc::Sender<RefreshTask>,
+    handle: AntigravityActorHandle,
 }
 
-impl AntigravityRefresherHandle {
-    pub(crate) async fn submit_refresh(
+struct AntigravityOauthWorkerActor;
+
+#[ractor::async_trait]
+impl Actor for AntigravityOauthWorkerActor {
+    type Msg = AntigravityOauthWorkerMessage;
+    type State = AntigravityOauthWorkerState;
+    type Arguments = (AntigravityActorHandle, Arc<AntigravityResolvedConfig>);
+
+    async fn pre_start(
         &self,
-        id: u64,
-        refresh_token: String,
-    ) -> Result<(), PolluxError> {
-        self.job_tx
-            .send(RefreshTask::RefreshCredential { id, refresh_token })
-            .await
-            .map_err(|_| {
-                PolluxError::RactorError("antigravity refresh job queue is closed".to_string())
-            })
-    }
+        _myself: ActorRef<Self::Msg>,
+        (handle, cfg): Self::Arguments,
+    ) -> Result<Self::State, ActorProcessingErr> {
+        let mut headers = HeaderMap::new();
+        let mut builder = reqwest::Client::builder()
+            .user_agent("antigravity-oauth/1.0".to_string())
+            .connect_timeout(Duration::from_secs(5))
+            .timeout(Duration::from_secs(30));
 
-    pub(crate) async fn submit_onboard_seed(
-        &self,
-        seed: AntigravityRefreshTokenSeed,
-    ) -> Result<(), PolluxError> {
-        self.job_tx
-            .send(RefreshTask::OnboardSeed { seed })
-            .await
-            .map_err(|_| {
-                PolluxError::RactorError("antigravity refresh job queue is closed".to_string())
-            })
-    }
-}
+        if let Some(proxy_url) = cfg.proxy.clone() {
+            let proxy = reqwest::Proxy::all(proxy_url.as_str())
+                .expect("invalid proxy url for reqwest client");
+            builder = builder.proxy(proxy);
+        }
 
-/// Spawn a background refresher pipeline for Antigravity refresh/onboarding.
-///
-/// This mirrors the geminicli/codex refresher pipeline shape:
-/// - governor rate limiter (oauth_tps)
-/// - buffer_unordered concurrency
-/// - deterministic retry policy inside the ops layer
-pub(crate) fn spawn_pipeline(
-    cfg: Arc<AntigravityResolvedConfig>,
-) -> (AntigravityRefresherHandle, mpsc::Receiver<RefreshOutcome>) {
-    let (job_tx, job_rx) = mpsc::channel::<RefreshTask>(1000);
-    let (out_tx, out_rx) = mpsc::channel::<RefreshOutcome>(1000);
+        if !cfg.enable_multiplexing {
+            headers.insert(CONNECTION, HeaderValue::from_static("close"));
+            builder = builder
+                .http1_only()
+                .pool_max_idle_per_host(0)
+                .pool_idle_timeout(Duration::from_secs(0));
+        } else {
+            builder = builder.http2_adaptive_window(true);
+        }
 
-    let mut headers = HeaderMap::new();
-    let mut builder = reqwest::Client::builder()
-        .user_agent("antigravity-oauth/1.0".to_string())
-        .connect_timeout(Duration::from_secs(5))
-        .timeout(Duration::from_secs(30));
+        let http = builder
+            .default_headers(headers)
+            .build()
+            .expect("FATAL: initialize antigravity refresh HTTP client failed");
 
-    if let Some(proxy_url) = cfg.proxy.clone() {
-        let proxy =
-            reqwest::Proxy::all(proxy_url.as_str()).expect("invalid proxy url for reqwest client");
-        builder = builder.proxy(proxy);
-    }
+        let oauth_tps = cfg.oauth_tps.max(1);
+        let oauth_tps_u32 = u32::try_from(oauth_tps).unwrap_or(u32::MAX);
+        let burst_u32 = u32::try_from(oauth_tps.saturating_mul(2)).unwrap_or(u32::MAX);
+        let limiter = Arc::new(RateLimiter::direct(
+            Quota::per_second(std::num::NonZeroU32::new(oauth_tps_u32).unwrap())
+                .allow_burst(std::num::NonZeroU32::new(burst_u32).unwrap()),
+        ));
 
-    if !cfg.enable_multiplexing {
-        headers.insert(CONNECTION, HeaderValue::from_static("close"));
-        builder = builder
-            .http1_only()
-            .pool_max_idle_per_host(0)
-            .pool_idle_timeout(Duration::from_secs(0));
-    } else {
-        builder = builder.http2_adaptive_window(true);
-    }
+        let (job_tx, job_rx) = mpsc::channel::<RefreshTask>(1000);
+        let pipeline_handle = handle.clone();
 
-    let http = builder
-        .default_headers(headers)
-        .build()
-        .expect("FATAL: initialize antigravity refresh HTTP client failed");
-
-    let oauth_tps = cfg.oauth_tps.max(1);
-    let oauth_tps_u32 = u32::try_from(oauth_tps).unwrap_or(u32::MAX);
-    let burst_u32 = u32::try_from(oauth_tps.saturating_mul(2)).unwrap_or(u32::MAX);
-    let limiter = Arc::new(RateLimiter::direct(
-        Quota::per_second(std::num::NonZeroU32::new(oauth_tps_u32).unwrap())
-            .allow_burst(std::num::NonZeroU32::new(burst_u32).unwrap()),
-    ));
-
-    let buffer_unordered = oauth_tps.saturating_mul(2).max(1);
-    tokio::spawn({
-        let cfg = cfg.clone();
-        async move {
+        let buffer_unordered = oauth_tps.saturating_mul(2).max(1);
+        let pipeline_cfg = cfg.clone();
+        tokio::spawn(async move {
             info!(
                 "Antigravity Refresh Pipeline Started: BufferUnordered={}, RateLimit={}/s, Burst={}",
                 buffer_unordered, oauth_tps_u32, burst_u32
@@ -182,7 +166,7 @@ pub(crate) fn spawn_pipeline(
                 .map(|task| {
                     let lim = limiter.clone();
                     let http = http.clone();
-                    let cfg = cfg.clone();
+                    let cfg = pipeline_cfg.clone();
                     async move {
                         lim.until_ready().await;
                         task.execute(cfg, http).await
@@ -191,25 +175,125 @@ pub(crate) fn spawn_pipeline(
                 .buffer_unordered(buffer_unordered);
 
             while let Some(outcome) = pipeline.next().await {
-                if out_tx.send(outcome).await.is_err() {
-                    warn!("Antigravity refresher outcome channel closed; worker stopping");
+                if let Err(e) = pipeline_handle.send_refresh_complete(outcome) {
+                    warn!("Actor unreachable (channel closed), worker stopping: {}", e);
                     break;
                 }
             }
 
             info!("Antigravity Refresh Pipeline Stopped");
-        }
-    });
+        });
 
-    (AntigravityRefresherHandle { job_tx }, out_rx)
+        info!(
+            proxy = %cfg.proxy.as_ref().map(|u| u.as_str()).unwrap_or("<none>"),
+            enable_multiplexing = cfg.enable_multiplexing,
+            oauth_tps = cfg.oauth_tps,
+            "AntigravityOauthWorker runtime config loaded"
+        );
+
+        Ok(AntigravityOauthWorkerState { job_tx, handle })
+    }
+
+    async fn handle(
+        &self,
+        _myself: ActorRef<Self::Msg>,
+        AntigravityOauthWorkerMessage(task): Self::Msg,
+        state: &mut Self::State,
+    ) -> Result<(), ActorProcessingErr> {
+        let tx = state.job_tx.clone();
+        let handle = state.handle.clone();
+
+        tokio::spawn(async move {
+            send_job(tx, handle, task).await;
+        });
+
+        Ok(())
+    }
 }
+
+async fn send_job(
+    tx: mpsc::Sender<RefreshTask>,
+    handle: AntigravityActorHandle,
+    task: RefreshTask,
+) {
+    if let Err(e) = tx.send(task).await {
+        warn!("Failed to submit refresh task (channel closed/full): {}", e);
+        let outcome = match e.0 {
+            RefreshTask::RefreshCredential { id, .. } => RefreshOutcome::RefreshCredential {
+                id,
+                patch: AntigravityPatch::default(),
+                result: Err(PolluxError::RactorError(
+                    "AntigravityOauthWorker job queue is closed".to_string(),
+                )),
+            },
+            RefreshTask::OnboardSeed { seed } => RefreshOutcome::OnboardSeed {
+                seed,
+                result: Err(PolluxError::RactorError(
+                    "AntigravityOauthWorker job queue is closed".to_string(),
+                )),
+            },
+        };
+        if let Err(e) = handle.send_refresh_complete(outcome) {
+            warn!(
+                "Actor unreachable (channel closed), dropping refresh result: {}",
+                e
+            );
+        }
+    }
+}
+
+/// Handle for submitting refresh/onboarding tasks to the worker actor.
+#[derive(Clone, Debug)]
+pub(in crate::providers::antigravity) struct AntigravityOauthWorkerHandle {
+    actor: ActorRef<AntigravityOauthWorkerMessage>,
+}
+
+impl AntigravityOauthWorkerHandle {
+    pub async fn spawn(
+        handle: AntigravityActorHandle,
+        cfg: Arc<AntigravityResolvedConfig>,
+    ) -> Result<Self, ActorProcessingErr> {
+        let (actor, _jh) = Actor::spawn(
+            Some("AntigravityOauthWorker".to_string()),
+            AntigravityOauthWorkerActor,
+            (handle, cfg),
+        )
+        .await
+        .map_err(|e| {
+            ActorProcessingErr::from(format!("AntigravityOauthWorkerActor spawn failed: {e}"))
+        })?;
+        Ok(Self { actor })
+    }
+
+    pub fn submit_refresh(&self, id: u64, refresh_token: String) -> Result<(), PolluxError> {
+        ractor::cast!(
+            self.actor,
+            AntigravityOauthWorkerMessage(RefreshTask::RefreshCredential { id, refresh_token })
+        )
+        .map_err(|e| PolluxError::RactorError(format!("AntigravityOauthWorker cast failed: {e}")))
+    }
+
+    pub fn submit_onboard_seed(
+        &self,
+        seed: AntigravityRefreshTokenSeed,
+    ) -> Result<(), PolluxError> {
+        ractor::cast!(
+            self.actor,
+            AntigravityOauthWorkerMessage(RefreshTask::OnboardSeed { seed })
+        )
+        .map_err(|e| PolluxError::RactorError(format!("AntigravityOauthWorker cast failed: {e}")))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Refresh / onboarding logic
+// ---------------------------------------------------------------------------
 
 async fn refresh_existing(
     cfg: Arc<AntigravityResolvedConfig>,
     http_client: reqwest::Client,
     refresh_token: &str,
 ) -> Result<AntigravityPatch, PolluxError> {
-    // This is for existing DB creds; project_id should already be set at creation.
     let token =
         AntigravityOauthEndpoints::refresh_access_token(&cfg, refresh_token, http_client).await?;
 

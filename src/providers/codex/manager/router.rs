@@ -11,7 +11,7 @@ use std::time::Duration;
 /// Stale entries are handled lazily — the scheduler evaluates each hinted ID
 /// via [`CredentialManager::get_assigned`] and falls back to queue selection on miss.
 pub struct RouteTable {
-    cache: Cache<u128, CredentialId>,
+    cache: Cache<(u64, u64), CredentialId>,
 }
 
 impl RouteTable {
@@ -27,20 +27,13 @@ impl RouteTable {
     /// Returns the cached credential for this `(session, model)` pair, if any.
     #[inline]
     pub fn get(&self, route_key: u64, model_mask: u64) -> Option<CredentialId> {
-        self.cache.get(&Self::composite_key(route_key, model_mask))
+        self.cache.get(&(route_key, model_mask))
     }
 
     /// Binds a `(session, model)` pair to the given credential.
     #[inline]
     pub fn insert(&self, route_key: u64, model_mask: u64, credential_id: CredentialId) {
-        self.cache
-            .insert(Self::composite_key(route_key, model_mask), credential_id);
-    }
-
-    /// Packs two `u64` halves into a single collision-free `u128` cache key.
-    #[inline]
-    fn composite_key(route_key: u64, model_mask: u64) -> u128 {
-        (route_key as u128) << 64 | model_mask as u128
+        self.cache.insert((route_key, model_mask), credential_id);
     }
 }
 

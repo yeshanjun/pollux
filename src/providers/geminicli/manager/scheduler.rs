@@ -258,7 +258,9 @@ impl CredentialManager {
                     if ticket_deadline >= *entry.get() =>
                 {
                     let ((reclaimed_cred_id, reclaimed_model_index), _) = entry.remove_entry();
-                    if let Some(target_queue) = self.queues.get_mut(reclaimed_model_index) {
+                    if let Some(target_queue) = self.queues.get_mut(reclaimed_model_index)
+                        && !target_queue.contains(&reclaimed_cred_id)
+                    {
                         target_queue.push_back(reclaimed_cred_id);
                     }
                 }
@@ -444,5 +446,34 @@ mod tests {
 
         assert_eq!(first.id, 1);
         assert_eq!(second.id, 2);
+    }
+
+    #[test]
+    fn cooldown_requeue_does_not_duplicate() {
+        let mut manager = CredentialManager::new(1);
+        let mut caps = ModelCapabilities::none();
+        caps.enable(0);
+
+        manager.add_credential(1, make_credential("p1"), caps.bits());
+
+        // Simulate: get_assigned pops and push_backs (credential is in queue)
+        let assigned = manager.get_assigned(mask(0)).assigned;
+        assert!(assigned.is_some());
+
+        // 429 arrives -> short cooldown
+        manager.report_rate_limit(1, mask(0), std::time::Duration::from_millis(10));
+
+        // Wait for cooldown to expire
+        std::thread::sleep(std::time::Duration::from_millis(20));
+
+        // process_waiting_room should NOT duplicate the credential
+        let result = manager.get_assigned(mask(0));
+        let queue_len = result.stats.queue_len;
+
+        // Queue should contain exactly 1 copy, not 2
+        assert_eq!(
+            queue_len, 1,
+            "credential duplicated in queue: len={queue_len}"
+        );
     }
 }

@@ -173,10 +173,8 @@ mod tests {
         .expect("request json must parse");
 
         service.patch_request(&mut req);
-        assert_eq!(
-            req.contents[0].parts[0].thought_signature.as_deref(),
-            Some("fn_signature_123")
-        );
+        // functionCall parts are skipped by antigravity patcher.
+        assert!(req.contents[0].parts[0].thought_signature.is_none());
     }
 
     #[test]

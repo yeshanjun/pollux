@@ -35,7 +35,6 @@ pub struct AntigravityClient {
     client: reqwest::Client,
     retry_policy: ExponentialBuilder,
     endpoints: ProviderEndpoints,
-    claude_system_preamble: String,
 }
 
 impl AntigravityClient {
@@ -55,7 +54,6 @@ impl AntigravityClient {
             client,
             retry_policy,
             endpoints,
-            claude_system_preamble: cfg.claude_system_preamble.clone(),
         }
     }
 
@@ -91,11 +89,9 @@ impl AntigravityClient {
         let model_mask = ctx.model_mask;
         let path = ctx.path.clone();
         let gemini_request = body.clone();
-        let claude_system_preamble = self.claude_system_preamble.clone();
 
         let op = {
             let gemini_request = gemini_request.clone();
-            let claude_system_preamble = claude_system_preamble.clone();
             move || {
                 let handle = handle.clone();
                 let client = client.clone();
@@ -103,7 +99,6 @@ impl AntigravityClient {
                 let gemini_request = gemini_request.clone();
                 let model = model.clone();
                 let path = path.clone();
-                let claude_system_preamble = claude_system_preamble.clone();
                 async move {
                     let start = Instant::now();
                     let assigned = handle
@@ -133,8 +128,7 @@ impl AntigravityClient {
                     .into_request(gemini_request.clone());
 
                     Self::apply_claude_thinking_defaults(model.as_str(), &mut payload.request);
-
-                    payload.prepend_system_instruction(claude_system_preamble.as_str());
+                    Self::backfill_function_call_ids(model.as_str(), &mut payload.request);
 
                     payload
                         .request
@@ -268,6 +262,51 @@ impl AntigravityClient {
                 "includeThoughts": true,
                 "thinkingBudget": CLAUDE_THINKING_BUDGET,
             }));
+        }
+    }
+
+    fn backfill_function_call_ids(model: &str, request: &mut GeminiGenerateContentRequest) {
+        if !model.starts_with("claude") {
+            return;
+        }
+
+        let mut pending_call_ids: Vec<String> = Vec::new();
+
+        for content in &mut request.contents {
+            match content.role.as_deref() {
+                Some("model") => {
+                    pending_call_ids.clear();
+                    for part in &mut content.parts {
+                        let Some(obj) = part.function_call.as_mut().and_then(|v| v.as_object_mut())
+                        else {
+                            continue;
+                        };
+                        let id_val = obj.entry("id").or_insert_with(|| {
+                            Value::String(format!("toolu_{}", Uuid::new_v4().simple()))
+                        });
+                        if let Some(id_str) = id_val.as_str() {
+                            pending_call_ids.push(id_str.to_string());
+                        }
+                    }
+                }
+                Some("user") => {
+                    let mut id_iter = pending_call_ids.drain(..);
+                    for part in &mut content.parts {
+                        let Some(obj) = part
+                            .function_response
+                            .as_mut()
+                            .and_then(|v| v.as_object_mut())
+                        else {
+                            continue;
+                        };
+                        let Some(matching_id) = id_iter.next() else {
+                            break;
+                        };
+                        obj.entry("id").or_insert(Value::String(matching_id));
+                    }
+                }
+                _ => {}
+            }
         }
     }
 }

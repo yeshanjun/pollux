@@ -38,17 +38,33 @@ pub trait Schedulable: Clone + Debug {
 
 /// Runtime credential = base resource data + dynamic capability bitset.
 #[derive(Debug, Clone)]
-pub struct RuntimeCredential<R> {
-    pub inner: R,
-    pub caps: ModelCapabilities,
+struct ResourceEntry<R> {
+    inner: R,
+    caps: ModelCapabilities,
+    refreshing: bool,
 }
 
-impl<R: Schedulable> RuntimeCredential<R> {
-    pub fn new(inner: R, initial_caps: ModelCapabilities) -> Self {
+impl<R> ResourceEntry<R> {
+    fn new(inner: R, initial_caps: ModelCapabilities) -> Self {
         Self {
             inner,
             caps: initial_caps,
+            refreshing: false,
         }
+    }
+
+    fn mark_refreshing(&mut self) {
+        self.refreshing = true;
+    }
+
+    fn is_refreshing(&self) -> bool {
+        self.refreshing
+    }
+
+    fn complete_refresh(&mut self, inner: R) -> ModelCapabilities {
+        self.inner = inner;
+        self.refreshing = false;
+        self.caps
     }
 }
 
@@ -116,11 +132,10 @@ impl ModelQueue {
 /// unified here. The type parameter `R` controls what a "credential" looks
 /// like and how it produces a lease.
 pub struct CredentialManager<R: Schedulable> {
-    creds: HashMap<CredentialId, RuntimeCredential<R>>,
+    creds: HashMap<CredentialId, ResourceEntry<R>>,
     queues: Vec<ModelQueue>,
     waiting_room: BinaryHeap<CooldownTicket>,
     cooldown_map: HashMap<(CredentialId, ModelIndex), Instant>,
-    refreshing: HashSet<CredentialId>,
 }
 
 impl<R: Schedulable> Default for CredentialManager<R> {
@@ -136,7 +151,6 @@ impl<R: Schedulable> CredentialManager<R> {
             queues: vec![ModelQueue::default(); model_count],
             waiting_room: BinaryHeap::new(),
             cooldown_map: HashMap::new(),
-            refreshing: HashSet::new(),
         }
     }
 
@@ -144,9 +158,29 @@ impl<R: Schedulable> CredentialManager<R> {
         let initial_caps = ModelCapabilities::from_bits(initial_caps_bits);
         let caps = self.creds.get(&id).map(|c| c.caps).unwrap_or(initial_caps);
 
-        self.creds
-            .insert(id, RuntimeCredential::new(resource, caps));
-        self.refreshing.remove(&id);
+        self.creds.insert(id, ResourceEntry::new(resource, caps));
+
+        for (index, queue) in self.queues.iter_mut().enumerate() {
+            if caps.supports(index) {
+                queue.push_back(id);
+            }
+        }
+    }
+
+    /// Applies a completed refresh by updating the inner resource for an
+    /// existing runtime credential, clearing the refresh marker, and
+    /// re-enqueuing the credential for all currently supported models.
+    ///
+    /// This preserves dynamic runtime state stored by the scheduler, such as
+    /// capabilities and cooldown bookkeeping.
+    pub fn complete_refresh(&mut self, id: CredentialId, resource: R) {
+        let Some(caps) = self
+            .creds
+            .get_mut(&id)
+            .map(|cred| cred.complete_refresh(resource))
+        else {
+            return;
+        };
 
         for (index, queue) in self.queues.iter_mut().enumerate() {
             if caps.supports(index) {
@@ -228,7 +262,7 @@ impl<R: Schedulable> CredentialManager<R> {
             return LeaseStatus::Unsupported;
         }
 
-        if self.refreshing.contains(&id) {
+        if cred.is_refreshing() {
             return LeaseStatus::Refreshing;
         }
 
@@ -267,7 +301,9 @@ impl<R: Schedulable> CredentialManager<R> {
     }
 
     pub fn mark_refreshing(&mut self, id: CredentialId) {
-        self.refreshing.insert(id);
+        if let Some(cred) = self.creds.get_mut(&id) {
+            cred.mark_refreshing();
+        }
         self.clear_cooldowns_for(id);
     }
 
@@ -288,7 +324,6 @@ impl<R: Schedulable> CredentialManager<R> {
 
     pub fn delete_credential(&mut self, id: CredentialId) {
         self.creds.remove(&id);
-        self.refreshing.remove(&id);
         self.clear_cooldowns_for(id);
     }
 
@@ -307,7 +342,9 @@ impl<R: Schedulable> CredentialManager<R> {
     }
 
     pub fn is_refreshing(&self, id: CredentialId) -> bool {
-        self.refreshing.contains(&id)
+        self.creds
+            .get(&id)
+            .is_some_and(ResourceEntry::is_refreshing)
     }
 
     pub fn total_creds(&self) -> usize {
@@ -323,7 +360,11 @@ impl<R: Schedulable> CredentialManager<R> {
         SchedulerStats {
             total_creds: self.creds.len(),
             queue_len,
-            refreshing: self.refreshing.len(),
+            refreshing: self
+                .creds
+                .values()
+                .filter(|cred| cred.is_refreshing())
+                .count(),
             cooldowns: self.cooldown_map.len(),
             ..Default::default()
         }
@@ -506,6 +547,32 @@ mod tests {
         mgr.mark_refreshing(1);
 
         assert_eq!(mgr.get_assigned(mask(0), None).assigned.unwrap().0, 2);
+    }
+
+    #[test]
+    fn complete_refresh_clears_refreshing_and_requeues() {
+        let mut mgr = Mgr::new(1);
+        mgr.add_credential(1, MockResource(true), caps_for(&[0]));
+        let result = mgr.get_assigned(mask(0), None);
+        assert_eq!(result.refresh_ids, vec![1]);
+
+        mgr.mark_refreshing(1);
+        mgr.complete_refresh(1, MockResource(false));
+        assert!(!mgr.get_credential(1).unwrap().0);
+        assert!(!mgr.is_refreshing(1));
+        assert_eq!(mgr.get_assigned(mask(0), None).assigned.unwrap().0, 1);
+    }
+
+    #[test]
+    fn complete_refresh_preserves_disabled_capabilities() {
+        let mut mgr = Mgr::new(2);
+        mgr.add_credential(1, MockResource(true), all_caps());
+        mgr.mark_model_unsupported(1, mask(1));
+        mgr.mark_refreshing(1);
+
+        mgr.complete_refresh(1, MockResource(false));
+        assert!(mgr.get_assigned(mask(1), None).assigned.is_none());
+        assert_eq!(mgr.get_assigned(mask(0), None).assigned.unwrap().0, 1);
     }
 
     // ── PerModel cooldown ─────────────────────────────────────────

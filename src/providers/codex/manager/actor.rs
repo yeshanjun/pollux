@@ -156,7 +156,7 @@ struct CodexActorState {
     ops: CredentialOps,
     manager: CredentialManager<CodexResource>,
     router: RouteTable,
-    model_caps_all: u64,
+    provider_supported_mask: u64,
     processor_handle: CodexOauthWorkerHandle,
 }
 
@@ -182,7 +182,7 @@ impl Actor for CodexActor {
         .await?;
 
         let model_count = MODEL_REGISTRY.len();
-        let model_caps_all = *SUPPORTED_MODEL_MASK;
+        let provider_supported_mask = *SUPPORTED_MODEL_MASK;
 
         let mut manager = CredentialManager::new(model_count);
 
@@ -196,7 +196,7 @@ impl Actor for CodexActor {
             ActorProcessingErr::from(format!("DB load active codex creds failed: {e}"))
         })?;
         for (id, cred) in rows {
-            manager.add_credential(id, cred, model_caps_all);
+            manager.add_credential(id, cred, provider_supported_mask);
         }
 
         info!(
@@ -220,7 +220,7 @@ impl Actor for CodexActor {
             ops,
             manager,
             router,
-            model_caps_all,
+            provider_supported_mask,
             processor_handle,
         })
     }
@@ -280,7 +280,7 @@ impl Actor for CodexActor {
                 let account_id = credential.account_id().to_string();
                 state
                     .manager
-                    .add_credential(id, credential, state.model_caps_all);
+                    .add_credential(id, credential, state.provider_supported_mask);
                 info!("ID: {id}, Account: {account_id}, submitted and activated");
             }
         }
@@ -543,9 +543,7 @@ impl CodexActor {
                 match success.kind {
                     CredentialJobKind::Refresh(id) => {
                         debug!("ID: {id} refresh success. Updating manager and persisting.");
-                        state
-                            .manager
-                            .add_credential(id, cred.clone(), state.model_caps_all);
+                        state.manager.complete_refresh(id, cred.clone());
 
                         let ops = state.ops.clone();
                         tokio::spawn(async move {
@@ -615,9 +613,7 @@ impl CodexActor {
                                 "ID: {id} refresh failed due to transient error: {}. Keeping credential.",
                                 err
                             );
-                            state
-                                .manager
-                                .add_credential(id, job.cred, state.model_caps_all);
+                            state.manager.complete_refresh(id, job.cred);
                         }
                     },
                     CredentialJobKind::IngestUntrusted => {

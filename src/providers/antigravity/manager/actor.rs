@@ -130,7 +130,7 @@ impl AntigravityActorHandle {
 struct AntigravityActorState {
     ops: CredentialOps,
     manager: CredentialManager<AntigravityResource>,
-    model_caps_all: u64,
+    provider_supported_mask: u64,
     refresh_handle: crate::providers::antigravity::workers::refresher::AntigravityRefresherHandle,
 }
 
@@ -150,7 +150,7 @@ impl Actor for AntigravityActor {
         let (ops, cfg) = args;
 
         let model_count = MODEL_REGISTRY.len();
-        let model_caps_all = cfg
+        let provider_supported_mask = cfg
             .model_list
             .iter()
             .filter_map(|name| crate::model_catalog::mask(name))
@@ -158,7 +158,7 @@ impl Actor for AntigravityActor {
 
         info!(
             supported_models = ?cfg.model_list,
-            supported_model_mask = format!("0x{:016x}", model_caps_all),
+            supported_model_mask = format!("0x{:016x}", provider_supported_mask),
             "AntigravityActor initializing"
         );
 
@@ -168,7 +168,7 @@ impl Actor for AntigravityActor {
             .await
             .map_err(|e| ActorProcessingErr::from(format!("DB load active creds failed: {e}")))?;
         for (id, cred) in rows {
-            manager.add_credential(id, cred, model_caps_all);
+            manager.add_credential(id, cred, provider_supported_mask);
         }
 
         info!(
@@ -191,7 +191,7 @@ impl Actor for AntigravityActor {
         Ok(AntigravityActorState {
             ops,
             manager,
-            model_caps_all,
+            provider_supported_mask,
             refresh_handle,
         })
     }
@@ -244,7 +244,7 @@ impl Actor for AntigravityActor {
                 let project = credential.project_id().to_string();
                 state
                     .manager
-                    .add_credential(id, credential, state.model_caps_all);
+                    .add_credential(id, credential, state.provider_supported_mask);
                 info!(id, project, "Antigravity credential activated");
             }
         }
@@ -474,7 +474,7 @@ impl AntigravityActor {
                             "failed applying refresh patch to in-memory credential: {}", e
                         );
                     }
-                    state.manager.add_credential(id, cred, state.model_caps_all);
+                    state.manager.complete_refresh(id, cred);
 
                     let ops = state.ops.clone();
                     tokio::spawn(async move {
@@ -511,7 +511,7 @@ impl AntigravityActor {
                             );
 
                             if let Some(cred) = state.manager.get_credential_clone(id) {
-                                state.manager.add_credential(id, cred, state.model_caps_all);
+                                state.manager.complete_refresh(id, cred);
                             } else {
                                 state.manager.delete_credential(id);
                             }

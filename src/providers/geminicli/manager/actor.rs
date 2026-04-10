@@ -159,7 +159,7 @@ impl GeminiCliActorHandle {
 struct GeminiCliActorState {
     ops: CredentialOps,
     manager: CredentialManager<GeminiCliResource>,
-    model_caps_all: u64,
+    provider_supported_mask: u64,
     processor_handle: GeminiCliOauthWorkerHandle,
 }
 
@@ -187,7 +187,7 @@ impl Actor for GeminiCliActor {
         .await?;
 
         let model_count = MODEL_REGISTRY.len();
-        let model_caps_all = *SUPPORTED_MODEL_MASK;
+        let provider_supported_mask = *SUPPORTED_MODEL_MASK;
 
         let mut manager = CredentialManager::new(model_count);
 
@@ -203,7 +203,7 @@ impl Actor for GeminiCliActor {
             .map_err(|e| ActorProcessingErr::from(format!("DB load active creds failed: {}", e)))?;
 
         for (id, cred) in rows {
-            manager.add_credential(id, cred, model_caps_all);
+            manager.add_credential(id, cred, provider_supported_mask);
         }
 
         info!(
@@ -223,7 +223,7 @@ impl Actor for GeminiCliActor {
         Ok(GeminiCliActorState {
             ops,
             manager,
-            model_caps_all,
+            provider_supported_mask,
             processor_handle,
         })
     }
@@ -276,7 +276,7 @@ impl Actor for GeminiCliActor {
                 let project = credential.project_id().to_string();
                 state
                     .manager
-                    .add_credential(id, credential, state.model_caps_all);
+                    .add_credential(id, credential, state.provider_supported_mask);
                 info!("ID: {id}, Project: {project}, submitted and activated");
             }
         }
@@ -586,9 +586,7 @@ impl GeminiCliActor {
                 let cred = success.cred;
                 match success.kind {
                     CredentialJobKind::Refresh(id) => {
-                        state
-                            .manager
-                            .add_credential(id, cred.clone(), state.model_caps_all);
+                        state.manager.complete_refresh(id, cred.clone());
                         let ops = state.ops.clone();
                         tokio::spawn(async move {
                             let patch = GeminiCliPatch {
@@ -648,9 +646,7 @@ impl GeminiCliActor {
                                 "ID: {id} Refresh failed due to transient error: {}. Keeping credential.",
                                 err
                             );
-                            state
-                                .manager
-                                .add_credential(id, job.cred, state.model_caps_all);
+                            state.manager.complete_refresh(id, job.cred);
                         }
                     },
                     CredentialJobKind::Ingest => {

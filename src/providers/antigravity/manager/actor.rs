@@ -1,5 +1,4 @@
 use super::ops::CredentialOps;
-use super::scheduler::{CredentialId, CredentialManager};
 use crate::config::AntigravityResolvedConfig;
 use crate::db::{AntigravityCreate, AntigravityPatch};
 use crate::error::{OauthError, PolluxError};
@@ -10,6 +9,7 @@ use crate::providers::antigravity::workers::refresher::{
     AntigravityRefreshTokenSeed, RefreshOutcome,
 };
 use crate::providers::manifest::AntigravityLease;
+use crate::providers::traits::scheduler::{CredentialId, CredentialManager};
 use oauth2::TokenResponse;
 use ractor::{Actor, ActorProcessingErr, ActorRef, RpcReplyPort};
 use std::{sync::Arc, time::Duration};
@@ -129,7 +129,7 @@ impl AntigravityActorHandle {
 /// Internal state held by ractor-driven Antigravity actor.
 struct AntigravityActorState {
     ops: CredentialOps,
-    manager: CredentialManager,
+    manager: CredentialManager<AntigravityResource>,
     model_caps_all: u64,
     refresh_handle: crate::providers::antigravity::workers::refresher::AntigravityRefresherHandle,
 }
@@ -265,7 +265,8 @@ impl AntigravityActor {
 
         let project_id = state
             .manager
-            .project_id_of(id)
+            .get_credential(id)
+            .map(|r| r.project_id().to_string())
             .unwrap_or_else(|| "-".to_string());
 
         let Some((before_bits, after_bits)) = state.manager.mark_model_unsupported(id, model_mask)
@@ -297,7 +298,7 @@ impl AntigravityActor {
         reply_port: RpcReplyPort<Option<AntigravityLease>>,
         model_mask: u64,
     ) {
-        let assignment = state.manager.get_assigned(model_mask);
+        let assignment = state.manager.get_assigned(model_mask, None);
 
         if !assignment.refresh_ids.is_empty() {
             self.handle_report_invalid(myself, state, assignment.refresh_ids)
@@ -305,23 +306,19 @@ impl AntigravityActor {
         }
 
         if let Some(assigned) = assignment.assigned {
+            let s = state.manager.stats(model_mask);
             info!(
                 "Get credential: id={}, project={}, model_mask=0x{:016x}, queue_len={}",
-                assigned.id,
-                assigned.project_id,
-                model_mask,
-                state.manager.queue_len(model_mask)
+                assigned.id, assigned.project_id, model_mask, s.queue_len
             );
             let _ = reply_port.send(Some(assigned));
             return;
         }
 
+        let s = state.manager.stats(model_mask);
         warn!(
             "No Antigravity credential available for model_mask=0x{:016x}, queue_len={}, cooldowns={}, refreshing={}",
-            model_mask,
-            state.manager.queue_len(model_mask),
-            state.manager.cooldown_len(),
-            state.manager.refreshing_len()
+            model_mask, s.queue_len, s.cooldowns, s.refreshing
         );
         let _ = reply_port.send(None);
     }
@@ -358,7 +355,7 @@ impl AntigravityActor {
                 continue;
             }
 
-            if let Some(current) = state.manager.get_full_credential_copy(id) {
+            if let Some(current) = state.manager.get_credential_clone(id) {
                 state.manager.mark_refreshing(id);
                 jobs_to_send.push((id, current.refresh_token().to_string()));
             }
@@ -388,7 +385,8 @@ impl AntigravityActor {
     async fn handle_report_baned(&self, state: &mut AntigravityActorState, id: CredentialId) {
         let project = state
             .manager
-            .project_id_of(id)
+            .get_credential(id)
+            .map(|r| r.project_id().to_string())
             .unwrap_or_else(|| "-".to_string());
         let removed = state.manager.contains(id);
         state.manager.delete_credential(id);
@@ -462,7 +460,7 @@ impl AntigravityActor {
                         return;
                     }
 
-                    let Some(mut cred) = state.manager.get_full_credential_copy(id) else {
+                    let Some(mut cred) = state.manager.get_credential_clone(id) else {
                         debug!(
                             id,
                             "refresh completed but credential missing in manager; skipping"
@@ -512,7 +510,7 @@ impl AntigravityActor {
                                 err
                             );
 
-                            if let Some(cred) = state.manager.get_full_credential_copy(id) {
+                            if let Some(cred) = state.manager.get_credential_clone(id) {
                                 state.manager.add_credential(id, cred, state.model_caps_all);
                             } else {
                                 state.manager.delete_credential(id);

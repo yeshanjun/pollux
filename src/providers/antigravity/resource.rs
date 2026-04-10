@@ -1,6 +1,7 @@
 use crate::db::{AntigravityCreate, DbAntigravityResource};
 use crate::error::PolluxError;
-use crate::providers::manifest::AntigravityProfile;
+use crate::providers::manifest::{AntigravityLease, AntigravityProfile};
+use crate::providers::traits::scheduler::{CredentialId, Schedulable};
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use tracing::debug;
@@ -54,10 +55,6 @@ impl AntigravityResource {
 
     pub fn refresh_token(&self) -> &str {
         &self.refresh_token
-    }
-
-    pub fn access_token(&self) -> Option<&str> {
-        self.access_token.as_deref()
     }
 
     #[allow(dead_code)]
@@ -121,6 +118,22 @@ impl AntigravityResource {
         let mut cred = AntigravityResource::default();
         cred.update_credential(payload)?;
         Ok(cred)
+    }
+}
+
+impl Schedulable for AntigravityResource {
+    type Lease = AntigravityLease;
+
+    fn is_expired(&self) -> bool {
+        self.is_expired()
+    }
+
+    fn make_lease(&self, id: CredentialId) -> AntigravityLease {
+        AntigravityLease {
+            id,
+            project_id: self.project_id.clone(),
+            access_token: self.access_token.clone().unwrap_or_default(),
+        }
     }
 }
 

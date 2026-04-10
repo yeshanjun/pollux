@@ -1,9 +1,9 @@
-use super::scheduler::CredentialId;
 use crate::db::{
     AntigravityCreate, AntigravityPatch, DbActorHandle, ProviderCreate, ProviderPatch,
 };
 use crate::error::PolluxError;
 use crate::providers::antigravity::resource::AntigravityResource;
+use crate::providers::traits::scheduler::CredentialId;
 
 #[derive(Clone)]
 pub struct CredentialOps {

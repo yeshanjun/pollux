@@ -1,8 +1,4 @@
-use super::{
-    ops::CredentialOps,
-    router::RouteTable,
-    scheduler::{CredentialId, CredentialManager},
-};
+use super::{ops::CredentialOps, router::RouteTable};
 use crate::config::CodexResolvedConfig;
 use crate::db::CodexPatch;
 use crate::error::{OauthError, PolluxError};
@@ -12,6 +8,7 @@ use crate::providers::codex::{
     CodexRefreshTokenSeed, SUPPORTED_MODEL_MASK, SUPPORTED_MODEL_NAMES, oauth::OauthTokenResponse,
 };
 use crate::providers::manifest::CodexLease;
+use crate::providers::traits::scheduler::{CredentialId, CredentialManager};
 use ractor::{Actor, ActorProcessingErr, ActorRef, RpcReplyPort};
 use std::{sync::Arc, time::Duration};
 use tracing::{debug, error, info, warn};
@@ -157,7 +154,7 @@ impl CodexActorHandle {
 
 struct CodexActorState {
     ops: CredentialOps,
-    manager: CredentialManager,
+    manager: CredentialManager<CodexResource>,
     router: RouteTable,
     model_caps_all: u64,
     processor_handle: CodexOauthWorkerHandle,
@@ -304,7 +301,8 @@ impl CodexActor {
 
         let account_id = state
             .manager
-            .account_id_of(id)
+            .get_credential(id)
+            .map(|r| r.account_id().to_string())
             .unwrap_or_else(|| "-".to_string());
 
         let disabled_names = crate::model_catalog::format_model_mask(model_mask);
@@ -413,7 +411,7 @@ impl CodexActor {
                 debug!("ID: {id} already refreshing, skipping.");
                 continue;
             }
-            if let Some(current) = state.manager.get_full_credential_copy(id) {
+            if let Some(current) = state.manager.get_credential_clone(id) {
                 state.manager.mark_refreshing(id);
 
                 info!(
@@ -450,7 +448,8 @@ impl CodexActor {
     async fn handle_report_baned(&self, state: &mut CodexActorState, id: CredentialId) {
         let account_id = state
             .manager
-            .account_id_of(id)
+            .get_credential(id)
+            .map(|r| r.account_id().to_string())
             .unwrap_or_else(|| "-".to_string());
         let removed = state.manager.contains(id);
 

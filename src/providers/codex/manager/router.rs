@@ -1,4 +1,4 @@
-use super::scheduler::CredentialId;
+use crate::providers::traits::scheduler::CredentialId;
 use moka::sync::Cache;
 use std::time::Duration;
 

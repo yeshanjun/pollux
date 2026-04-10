@@ -1,7 +1,7 @@
-use super::scheduler::CredentialId;
 use crate::db::{CodexCreate, CodexPatch, DbActorHandle, ProviderCreate, ProviderPatch};
 use crate::error::PolluxError;
 use crate::providers::codex::resource::CodexResource;
+use crate::providers::traits::scheduler::CredentialId;
 
 #[derive(Clone)]
 pub struct CredentialOps {

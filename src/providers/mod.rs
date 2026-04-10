@@ -2,9 +2,9 @@ pub mod antigravity;
 pub mod codex;
 pub mod geminicli;
 pub mod manifest;
+pub(crate) mod traits;
 
 mod bootstrap;
-pub(crate) mod lease_status;
 mod policy;
 mod provider_endpoints;
 mod upstream_retry;

@@ -1,7 +1,7 @@
-use super::scheduler::CredentialId;
 use crate::db::{DbActorHandle, GeminiCliCreate, GeminiCliPatch, ProviderCreate, ProviderPatch};
 use crate::error::PolluxError;
 use crate::providers::geminicli::resource::GeminiCliResource;
+use crate::providers::traits::scheduler::CredentialId;
 
 #[derive(Clone)]
 pub struct CredentialOps {

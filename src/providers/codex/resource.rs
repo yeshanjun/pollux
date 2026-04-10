@@ -3,6 +3,7 @@ use crate::error::PolluxError;
 use crate::providers::codex::CodexRefreshTokenSeed;
 use crate::providers::codex::oauth::OauthTokenResponse;
 use crate::providers::manifest::{CodexLease, CodexProfile};
+use crate::providers::traits::scheduler::{CooldownScope, CredentialId, Schedulable};
 use chrono::{DateTime, Duration, Utc};
 use oauth2::TokenResponse;
 use serde::{Deserialize, Serialize};
@@ -78,16 +79,6 @@ impl CodexResource {
     #[allow(dead_code)]
     pub fn expiry(&self) -> DateTime<Utc> {
         self.expiry
-    }
-
-    #[allow(dead_code)]
-    pub fn into_lease(self, id: u64) -> CodexLease {
-        CodexLease {
-            id,
-            access_token: self.access_token,
-            account_id: self.account_id,
-            email: self.email,
-        }
     }
 
     /// Merge updates from any JSON-serializable payload into this resource.
@@ -206,6 +197,24 @@ impl CodexResource {
             expiry,
             chatgpt_plan_type: identity.chatgpt_plan_type,
         })
+    }
+}
+
+impl Schedulable for CodexResource {
+    type Lease = CodexLease;
+    const COOLDOWN_GRANULARITY: CooldownScope = CooldownScope::PerCredential;
+
+    fn is_expired(&self) -> bool {
+        self.is_expired()
+    }
+
+    fn make_lease(&self, id: CredentialId) -> CodexLease {
+        CodexLease {
+            id,
+            access_token: self.access_token.clone(),
+            account_id: self.account_id.clone(),
+            email: self.email.clone(),
+        }
     }
 }
 

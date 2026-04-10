@@ -1,6 +1,7 @@
 use crate::db::{DbGeminiCliResource, GeminiCliCreate};
 use crate::error::PolluxError;
 use crate::providers::manifest::{GeminiCliLease, GeminiCliProfile};
+use crate::providers::traits::scheduler::{CredentialId, Schedulable};
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use tracing::debug;
@@ -64,17 +65,6 @@ impl GeminiCliResource {
         &self.access_token
     }
 
-    #[allow(dead_code)]
-    pub fn into_lease(self, id: u64) -> GeminiCliLease {
-        GeminiCliLease {
-            id,
-            project_id: self.project_id,
-            access_token: self.access_token,
-            email: self.email,
-        }
-    }
-
-    #[allow(dead_code)]
     pub fn expiry(&self) -> DateTime<Utc> {
         self.expiry
     }
@@ -139,6 +129,23 @@ impl GeminiCliResource {
         let mut cred = GeminiCliResource::default();
         cred.update_credential(payload)?;
         Ok(cred)
+    }
+}
+
+impl Schedulable for GeminiCliResource {
+    type Lease = GeminiCliLease;
+
+    fn is_expired(&self) -> bool {
+        self.is_expired()
+    }
+
+    fn make_lease(&self, id: CredentialId) -> GeminiCliLease {
+        GeminiCliLease {
+            id,
+            project_id: self.project_id.clone(),
+            access_token: self.access_token.clone(),
+            email: self.email.clone(),
+        }
     }
 }
 

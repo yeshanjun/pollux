@@ -1,7 +1,4 @@
-use super::{
-    ops::CredentialOps,
-    scheduler::{CredentialId, CredentialManager},
-};
+use super::ops::CredentialOps;
 use crate::config::GeminiCliResolvedConfig;
 use crate::db::GeminiCliPatch;
 use crate::error::{OauthError, PolluxError};
@@ -15,6 +12,7 @@ use crate::providers::geminicli::workers::{
 };
 use crate::providers::geminicli::{SUPPORTED_MODEL_MASK, SUPPORTED_MODEL_NAMES};
 use crate::providers::manifest::{GeminiCliLease, GeminiCliProfile};
+use crate::providers::traits::scheduler::{CredentialId, CredentialManager};
 use ractor::{Actor, ActorProcessingErr, ActorRef, RpcReplyPort};
 use serde_json::json;
 use std::{sync::Arc, time::Duration};
@@ -160,7 +158,7 @@ impl GeminiCliActorHandle {
 /// Internal state held by ractor-driven Gemini CLI actor.
 struct GeminiCliActorState {
     ops: CredentialOps,
-    manager: CredentialManager,
+    manager: CredentialManager<GeminiCliResource>,
     model_caps_all: u64,
     processor_handle: GeminiCliOauthWorkerHandle,
 }
@@ -299,7 +297,8 @@ impl GeminiCliActor {
 
         let project_id = state
             .manager
-            .project_id_of(id)
+            .get_credential(id)
+            .map(|r| r.project_id().to_string())
             .unwrap_or_else(|| "-".to_string());
 
         // Scheduler is pure logic; log the state transition at the actor boundary.
@@ -333,7 +332,7 @@ impl GeminiCliActor {
         model_mask: u64,
     ) {
         let start = std::time::Instant::now();
-        let assignment = state.manager.get_assigned(model_mask);
+        let assignment = state.manager.get_assigned(model_mask, None);
         let sched_us = start.elapsed().as_micros() as u64;
         let stats = &assignment.stats;
 
@@ -405,7 +404,7 @@ impl GeminiCliActor {
                 debug!("ID: {id} in batch already refreshing, skipping.");
                 continue;
             }
-            if let Some(current) = state.manager.get_full_credential_copy(id) {
+            if let Some(current) = state.manager.get_credential_clone(id) {
                 state.manager.mark_refreshing(id);
 
                 info!(
@@ -447,7 +446,8 @@ impl GeminiCliActor {
     async fn handle_report_baned(&self, state: &mut GeminiCliActorState, id: CredentialId) {
         let project = state
             .manager
-            .project_id_of(id)
+            .get_credential(id)
+            .map(|r| r.project_id().to_string())
             .unwrap_or_else(|| "-".to_string());
         let removed_cred = state.manager.contains(id);
 

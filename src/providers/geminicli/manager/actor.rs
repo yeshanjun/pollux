@@ -12,7 +12,7 @@ use crate::providers::geminicli::workers::{
 };
 use crate::providers::geminicli::{SUPPORTED_MODEL_MASK, SUPPORTED_MODEL_NAMES};
 use crate::providers::manifest::{GeminiCliLease, GeminiCliProfile};
-use crate::providers::traits::scheduler::{CredentialId, CredentialManager};
+use crate::providers::traits::scheduler::{CredentialId, ResourceScheduler};
 use ractor::{Actor, ActorProcessingErr, ActorRef, RpcReplyPort};
 use serde_json::json;
 use std::{sync::Arc, time::Duration};
@@ -158,7 +158,7 @@ impl GeminiCliActorHandle {
 /// Internal state held by ractor-driven Gemini CLI actor.
 struct GeminiCliActorState {
     ops: CredentialOps,
-    manager: CredentialManager<GeminiCliResource>,
+    manager: ResourceScheduler<GeminiCliResource>,
     provider_supported_mask: u64,
     processor_handle: GeminiCliOauthWorkerHandle,
 }
@@ -189,7 +189,7 @@ impl Actor for GeminiCliActor {
         let model_count = MODEL_REGISTRY.len();
         let provider_supported_mask = *SUPPORTED_MODEL_MASK;
 
-        let mut manager = CredentialManager::new(model_count);
+        let mut manager = ResourceScheduler::new(model_count);
 
         let model_names = (*SUPPORTED_MODEL_NAMES).clone();
         info!(

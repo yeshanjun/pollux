@@ -9,7 +9,7 @@ use crate::providers::antigravity::workers::refresher::{
     AntigravityRefreshTokenSeed, RefreshOutcome,
 };
 use crate::providers::manifest::AntigravityLease;
-use crate::providers::traits::scheduler::{CredentialId, CredentialManager};
+use crate::providers::traits::scheduler::{CredentialId, ResourceScheduler};
 use oauth2::TokenResponse;
 use ractor::{Actor, ActorProcessingErr, ActorRef, RpcReplyPort};
 use std::{sync::Arc, time::Duration};
@@ -129,7 +129,7 @@ impl AntigravityActorHandle {
 /// Internal state held by ractor-driven Antigravity actor.
 struct AntigravityActorState {
     ops: CredentialOps,
-    manager: CredentialManager<AntigravityResource>,
+    manager: ResourceScheduler<AntigravityResource>,
     provider_supported_mask: u64,
     refresh_handle: crate::providers::antigravity::workers::refresher::AntigravityRefresherHandle,
 }
@@ -162,7 +162,7 @@ impl Actor for AntigravityActor {
             "AntigravityActor initializing"
         );
 
-        let mut manager = CredentialManager::new(model_count);
+        let mut manager = ResourceScheduler::new(model_count);
         let rows = ops
             .load_active()
             .await
@@ -298,7 +298,10 @@ impl AntigravityActor {
         reply_port: RpcReplyPort<Option<AntigravityLease>>,
         model_mask: u64,
     ) {
+        let start = std::time::Instant::now();
         let assignment = state.manager.get_assigned(model_mask, None);
+        let sched_us = start.elapsed().as_micros() as u64;
+        let stats = &assignment.stats;
 
         if !assignment.refresh_ids.is_empty() {
             self.handle_report_invalid(myself, state, assignment.refresh_ids)
@@ -306,19 +309,31 @@ impl AntigravityActor {
         }
 
         if let Some(assigned) = assignment.assigned {
-            let s = state.manager.stats(model_mask);
             info!(
-                "Get credential: id={}, project={}, model_mask=0x{:016x}, queue_len={}",
-                assigned.id, assigned.project_id, model_mask, s.queue_len
+                sched_us,
+                id = assigned.id,
+                project = %assigned.project_id,
+                model_mask = format_args!("0x{:016x}", model_mask),
+                queue = stats.queue_len,
+                total = stats.total_creds,
+                cooling = stats.cooldowns,
+                refreshing = stats.refreshing,
+                "[Antigravity] Credential assigned"
             );
             let _ = reply_port.send(Some(assigned));
             return;
         }
 
-        let s = state.manager.stats(model_mask);
         warn!(
-            "No Antigravity credential available for model_mask=0x{:016x}, queue_len={}, cooldowns={}, refreshing={}",
-            model_mask, s.queue_len, s.cooldowns, s.refreshing
+            model_mask = format_args!("0x{:016x}", model_mask),
+            queue = stats.queue_len,
+            total = stats.total_creds,
+            cooling = stats.cooldowns,
+            refreshing = stats.refreshing,
+            skipped.cooling = stats.skipped_cooling,
+            skipped.refreshing = stats.skipped_refreshing,
+            skipped.expired = stats.skipped_expired,
+            "[Antigravity] No credential available"
         );
         let _ = reply_port.send(None);
     }

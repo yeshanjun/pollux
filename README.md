@@ -28,53 +28,6 @@ Recommended usage (to avoid confusion):
 
 OAuth entry/callback endpoints do **not** require the key.
 
-## Quick Start
-
-### 1) Configure (`config.toml`)
-
-Template: [`config.toml.example`](./config.toml.example)
-
-`pollux` requires a real `config.toml` at runtime (and `basic.pollux_key` must be non-empty).
-
-Minimal example:
-
-```toml
-[basic]
-listen_addr = "0.0.0.0"
-listen_port = 8188
-database_url = "sqlite://data.db"
-loglevel = "info"
-pollux_key = "change-me"
-insecure_cookie = false
-
-[providers.geminicli]
-model_list = ["gemini-2.5-pro"]
-
-[providers.codex]
-model_list = ["gpt-5.2-codex"]
-```
-
-`basic.insecure_cookie` defaults to `false` (recommended for HTTPS).
-If you access Pollux via plain HTTP (for testing), set it to `true`; otherwise browser OAuth session cookies may not be sent.
-
-### 2) Run
-
-**Option A: [Docker Compose]**
-
-Template: [`docker-compose.yml.example`](./docker-compose.yml.example)
-
-- Copy `docker-compose.yml.example` to `docker-compose.yml`
-- Make sure your `config.toml` is mounted to `/app/config.toml`
-- Start: `docker compose up -d`
-
-**Option B: Local**
-
-```bash
-cargo run --release
-```
-
-Server defaults to `0.0.0.0:8188` (configurable).
-
 ## Onboarding Credentials
 
 ### Gemini CLI (Google)

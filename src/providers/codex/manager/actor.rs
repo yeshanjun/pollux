@@ -8,7 +8,7 @@ use crate::providers::codex::{
     CodexRefreshTokenSeed, SUPPORTED_MODEL_MASK, SUPPORTED_MODEL_NAMES, oauth::OauthTokenResponse,
 };
 use crate::providers::manifest::CodexLease;
-use crate::providers::traits::scheduler::{CredentialId, CredentialManager};
+use crate::providers::traits::scheduler::{CredentialId, ResourceScheduler};
 use ractor::{Actor, ActorProcessingErr, ActorRef, RpcReplyPort};
 use std::{sync::Arc, time::Duration};
 use tracing::{debug, error, info, warn};
@@ -154,7 +154,7 @@ impl CodexActorHandle {
 
 struct CodexActorState {
     ops: CredentialOps,
-    manager: CredentialManager<CodexResource>,
+    manager: ResourceScheduler<CodexResource>,
     router: RouteTable,
     provider_supported_mask: u64,
     processor_handle: CodexOauthWorkerHandle,
@@ -184,7 +184,7 @@ impl Actor for CodexActor {
         let model_count = MODEL_REGISTRY.len();
         let provider_supported_mask = *SUPPORTED_MODEL_MASK;
 
-        let mut manager = CredentialManager::new(model_count);
+        let mut manager = ResourceScheduler::new(model_count);
 
         let model_names = (*SUPPORTED_MODEL_NAMES).clone();
         info!(
@@ -347,6 +347,8 @@ impl CodexActor {
                 .await;
         }
 
+        let stats = state.manager.stats(model_mask);
+
         if let Some(assigned) = assignment.assigned {
             if let Some(rk) = route_key
                 && !assignment.route_hit
@@ -354,7 +356,6 @@ impl CodexActor {
                 state.router.insert(rk, model_mask, assigned.id);
             }
 
-            let s = state.manager.stats(model_mask);
             info!(
                 sched_us,
                 id = assigned.id,
@@ -362,20 +363,26 @@ impl CodexActor {
                 email = %assigned.email.as_deref().unwrap_or("-"),
                 model_mask = format_args!("0x{model_mask:016x}"),
                 sticky = assignment.route_hit,
-                queue_len = s.queue_len,
+                queue = stats.queue_len,
+                total = stats.total_creds,
+                cooling = stats.cooldowns,
+                refreshing = stats.refreshing,
                 "[Codex] Credential assigned"
             );
             let _ = reply_port.send(Some(assigned));
             return;
         }
 
-        let s = state.manager.stats(model_mask);
         warn!(
             model_mask = format_args!("0x{model_mask:016x}"),
             sticky_id = ?sticky_id,
-            queue_len = s.queue_len,
-            cooldowns = s.cooldowns,
-            refreshing = s.refreshing,
+            queue = stats.queue_len,
+            total = stats.total_creds,
+            cooling = stats.cooldowns,
+            refreshing = stats.refreshing,
+            skipped.cooling = assignment.stats.skipped_cooling,
+            skipped.refreshing = assignment.stats.skipped_refreshing,
+            skipped.expired = assignment.stats.skipped_expired,
             "[Codex] No credential available"
         );
         let _ = reply_port.send(None);

@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 
 use super::lease_status::{LeaseLabel, LeaseStatus};
 use crate::model_catalog::ModelCapabilities;
+use tracing::error;
 
 pub type CredentialId = u64;
 pub type ModelIndex = usize;
@@ -20,7 +21,7 @@ pub enum CooldownScope {
 /// Trait for credential resources that can be managed by the generic scheduler.
 ///
 /// Each provider implements this on its resource type (e.g. `GeminiCliResource`,
-/// `CodexResource`) to plug into the shared `CredentialManager<R>` scheduling logic.
+/// `CodexResource`) to plug into the shared `ResourceScheduler<R>` scheduling logic.
 pub trait Schedulable: Clone + Debug {
     /// The lease type produced on successful credential assignment.
     type Lease: LeaseLabel + Debug;
@@ -61,15 +62,50 @@ impl<R> ResourceEntry<R> {
         self.refreshing
     }
 
-    fn complete_refresh(&mut self, inner: R) -> ModelCapabilities {
+    fn complete_refresh(&mut self, inner: R) -> (ModelCapabilities, bool) {
+        let was_refreshing = self.refreshing;
         self.inner = inner;
         self.refreshing = false;
-        self.caps
+        (self.caps, was_refreshing)
+    }
+}
+
+#[derive(Debug, Default, Clone)]
+struct SchedulerStatus {
+    refreshing: usize,
+}
+
+impl SchedulerStatus {
+    fn refreshing(&self) -> usize {
+        self.refreshing
+    }
+
+    fn inc_refreshing(&mut self) {
+        match self.refreshing.checked_add(1) {
+            Some(next) => self.refreshing = next,
+            None => {
+                error!(
+                    current = self.refreshing,
+                    "SchedulerStatus.refreshing overflow"
+                );
+                debug_assert!(false, "SchedulerStatus.refreshing overflow");
+            }
+        }
+    }
+
+    fn dec_refreshing(&mut self) {
+        match self.refreshing.checked_sub(1) {
+            Some(next) => self.refreshing = next,
+            None => {
+                error!("SchedulerStatus.refreshing underflow");
+                debug_assert!(false, "SchedulerStatus.refreshing underflow");
+            }
+        }
     }
 }
 
 #[derive(Debug, Clone, Copy, Default)]
-pub struct SchedulerStats {
+pub struct AssignmentStats {
     pub total_creds: usize,
     pub queue_len: usize,
     pub refreshing: usize,
@@ -85,7 +121,7 @@ pub struct AssignmentResult<L> {
     pub assigned: Option<L>,
     pub refresh_ids: Vec<CredentialId>,
     pub route_hit: bool,
-    pub stats: SchedulerStats,
+    pub stats: AssignmentStats,
 }
 
 impl<L> Default for AssignmentResult<L> {
@@ -94,7 +130,7 @@ impl<L> Default for AssignmentResult<L> {
             assigned: None,
             refresh_ids: Vec::new(),
             route_hit: false,
-            stats: SchedulerStats::default(),
+            stats: AssignmentStats::default(),
         }
     }
 }
@@ -126,31 +162,33 @@ impl ModelQueue {
     }
 }
 
-/// Generic credential scheduler. Pure logic, no IO, no locks.
+/// Generic resource scheduler. Pure logic, no IO, no locks.
 ///
 /// All provider-specific scheduling (GeminiCli, Codex, Antigravity, …) is
-/// unified here. The type parameter `R` controls what a "credential" looks
+/// unified here. The type parameter `R` controls what a managed resource looks
 /// like and how it produces a lease.
-pub struct CredentialManager<R: Schedulable> {
+pub struct ResourceScheduler<R: Schedulable> {
     creds: HashMap<CredentialId, ResourceEntry<R>>,
     queues: Vec<ModelQueue>,
     waiting_room: BinaryHeap<CooldownTicket>,
     cooldown_map: HashMap<(CredentialId, ModelIndex), Instant>,
+    status: SchedulerStatus,
 }
 
-impl<R: Schedulable> Default for CredentialManager<R> {
+impl<R: Schedulable> Default for ResourceScheduler<R> {
     fn default() -> Self {
         Self::new(0)
     }
 }
 
-impl<R: Schedulable> CredentialManager<R> {
+impl<R: Schedulable> ResourceScheduler<R> {
     pub fn new(model_count: usize) -> Self {
         Self {
             creds: HashMap::new(),
             queues: vec![ModelQueue::default(); model_count],
             waiting_room: BinaryHeap::new(),
             cooldown_map: HashMap::new(),
+            status: SchedulerStatus::default(),
         }
     }
 
@@ -158,7 +196,10 @@ impl<R: Schedulable> CredentialManager<R> {
         let initial_caps = ModelCapabilities::from_bits(initial_caps_bits);
         let caps = self.creds.get(&id).map(|c| c.caps).unwrap_or(initial_caps);
 
-        self.creds.insert(id, ResourceEntry::new(resource, caps));
+        let replaced = self.creds.insert(id, ResourceEntry::new(resource, caps));
+        if replaced.is_some_and(|entry| entry.is_refreshing()) {
+            self.status.dec_refreshing();
+        }
 
         for (index, queue) in self.queues.iter_mut().enumerate() {
             if caps.supports(index) {
@@ -174,13 +215,17 @@ impl<R: Schedulable> CredentialManager<R> {
     /// This preserves dynamic runtime state stored by the scheduler, such as
     /// capabilities and cooldown bookkeeping.
     pub fn complete_refresh(&mut self, id: CredentialId, resource: R) {
-        let Some(caps) = self
+        let Some((caps, was_refreshing)) = self
             .creds
             .get_mut(&id)
             .map(|cred| cred.complete_refresh(resource))
         else {
             return;
         };
+
+        if was_refreshing {
+            self.status.dec_refreshing();
+        }
 
         for (index, queue) in self.queues.iter_mut().enumerate() {
             if caps.supports(index) {
@@ -301,8 +346,11 @@ impl<R: Schedulable> CredentialManager<R> {
     }
 
     pub fn mark_refreshing(&mut self, id: CredentialId) {
-        if let Some(cred) = self.creds.get_mut(&id) {
+        if let Some(cred) = self.creds.get_mut(&id)
+            && !cred.is_refreshing()
+        {
             cred.mark_refreshing();
+            self.status.inc_refreshing();
         }
         self.clear_cooldowns_for(id);
     }
@@ -323,7 +371,13 @@ impl<R: Schedulable> CredentialManager<R> {
     }
 
     pub fn delete_credential(&mut self, id: CredentialId) {
-        self.creds.remove(&id);
+        if self
+            .creds
+            .remove(&id)
+            .is_some_and(|entry| entry.is_refreshing())
+        {
+            self.status.dec_refreshing();
+        }
         self.clear_cooldowns_for(id);
     }
 
@@ -351,20 +405,16 @@ impl<R: Schedulable> CredentialManager<R> {
         self.creds.len()
     }
 
-    pub fn stats(&self, model_mask: u64) -> SchedulerStats {
+    pub fn stats(&self, model_mask: u64) -> AssignmentStats {
         let queue_len = self
             .index_from_mask(model_mask)
             .and_then(|i| self.queues.get(i).map(ModelQueue::len))
             .unwrap_or(0);
 
-        SchedulerStats {
+        AssignmentStats {
             total_creds: self.creds.len(),
             queue_len,
-            refreshing: self
-                .creds
-                .values()
-                .filter(|cred| cred.is_refreshing())
-                .count(),
+            refreshing: self.status.refreshing(),
             cooldowns: self.cooldown_map.len(),
             ..Default::default()
         }
@@ -463,7 +513,7 @@ mod tests {
         }
     }
 
-    type Mgr = CredentialManager<MockResource>;
+    type Mgr = ResourceScheduler<MockResource>;
 
     fn mask(index: usize) -> u64 {
         1u64 << index
@@ -575,6 +625,28 @@ mod tests {
         assert_eq!(mgr.get_assigned(mask(0), None).assigned.unwrap().0, 1);
     }
 
+    #[test]
+    fn refreshing_stats_track_state_transitions() {
+        let mut mgr = Mgr::new(1);
+        mgr.add_credential(1, MockResource(false), caps_for(&[0]));
+        mgr.add_credential(2, MockResource(false), caps_for(&[0]));
+
+        assert_eq!(mgr.stats(mask(0)).refreshing, 0);
+
+        mgr.mark_refreshing(1);
+        mgr.mark_refreshing(1);
+        assert_eq!(mgr.stats(mask(0)).refreshing, 1);
+
+        mgr.mark_refreshing(2);
+        assert_eq!(mgr.stats(mask(0)).refreshing, 2);
+
+        mgr.complete_refresh(1, MockResource(false));
+        assert_eq!(mgr.stats(mask(0)).refreshing, 1);
+
+        mgr.delete_credential(2);
+        assert_eq!(mgr.stats(mask(0)).refreshing, 0);
+    }
+
     // ── PerModel cooldown ─────────────────────────────────────────
 
     #[test]
@@ -617,7 +689,7 @@ mod tests {
 
     // ── PerCredential cooldown ────────────────────────────────────
 
-    type PerCredMgr = CredentialManager<MockPerCredResource>;
+    type PerCredMgr = ResourceScheduler<MockPerCredResource>;
 
     #[test]
     fn credential_level_cooldown_blocks_all_models() {

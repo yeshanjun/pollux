@@ -9,7 +9,7 @@ use std::time::Duration;
 /// prompt-cache hit rates on the provider side.
 ///
 /// Stale entries are handled lazily — the scheduler evaluates each hinted ID
-/// via [`CredentialManager::get_assigned`] and falls back to queue selection on miss.
+/// via [`ResourceScheduler::get_assigned`] and falls back to queue selection on miss.
 pub struct RouteTable {
     cache: Cache<(u64, u64), CredentialId>,
 }

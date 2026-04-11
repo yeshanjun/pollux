@@ -43,64 +43,156 @@ struct ResourceEntry<R> {
     inner: R,
     caps: ModelCapabilities,
     refreshing: bool,
+    cooldowns: Vec<Option<Instant>>,
 }
 
 impl<R> ResourceEntry<R> {
-    fn new(inner: R, initial_caps: ModelCapabilities) -> Self {
+    fn new(inner: R, initial_caps: ModelCapabilities, model_count: usize) -> Self {
         Self {
             inner,
             caps: initial_caps,
             refreshing: false,
+            cooldowns: vec![None; model_count],
         }
-    }
-
-    fn mark_refreshing(&mut self) {
-        self.refreshing = true;
     }
 
     fn is_refreshing(&self) -> bool {
         self.refreshing
     }
 
-    fn complete_refresh(&mut self, inner: R) -> (ModelCapabilities, bool) {
-        let was_refreshing = self.refreshing;
+    /// Marks this entry as refreshing and increments the status counter.
+    /// No-op if already refreshing (prevents double-counting).
+    fn mark_refreshing(&mut self, status: &mut SchedulerStatus) {
+        if !self.refreshing {
+            self.refreshing = true;
+            status.inc_refresh_count();
+        }
+    }
+
+    /// Completes a refresh: replaces the inner resource, clears the
+    /// refreshing flag, and decrements the status counter. Returns caps
+    /// for re-enqueue.
+    fn complete_refresh(&mut self, inner: R, status: &mut SchedulerStatus) -> ModelCapabilities {
+        if self.refreshing {
+            status.dec_refresh_count();
+        }
         self.inner = inner;
         self.refreshing = false;
-        (self.caps, was_refreshing)
+        self.caps
+    }
+
+    /// Adjusts status counters for an entry that is about to be dropped
+    /// (removed from `creds`).
+    fn detach(&mut self, status: &mut SchedulerStatus) {
+        if self.refreshing {
+            status.dec_refresh_count();
+        }
+        self.clear_cooldowns(status);
+    }
+
+    fn is_cooling(&self, model_index: ModelIndex) -> bool {
+        self.cooldowns[model_index].is_some_and(|d| Instant::now() < d)
+    }
+
+    fn set_cooldown(
+        &mut self,
+        model_index: ModelIndex,
+        deadline: Instant,
+        status: &mut SchedulerStatus,
+    ) {
+        if self.cooldowns[model_index].is_none() {
+            status.inc_cooldown_count(model_index);
+        }
+        self.cooldowns[model_index] = Some(deadline);
+    }
+
+    /// Tries to expire a cooldown placed by a specific waiting-room ticket.
+    /// Returns `true` if the ticket matched (caller should re-enqueue).
+    fn try_reclaim_cooldown(
+        &mut self,
+        model_index: ModelIndex,
+        ticket_deadline: Instant,
+        status: &mut SchedulerStatus,
+    ) -> bool {
+        if self.cooldowns[model_index] == Some(ticket_deadline) {
+            self.cooldowns[model_index] = None;
+            status.dec_cooldown_count(model_index);
+            true
+        } else {
+            false
+        }
+    }
+
+    fn clear_cooldowns(&mut self, status: &mut SchedulerStatus) {
+        for (idx, slot) in self.cooldowns.iter_mut().enumerate() {
+            if slot.is_some() {
+                status.dec_cooldown_count(idx);
+                *slot = None;
+            }
+        }
     }
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 struct SchedulerStatus {
-    refreshing: usize,
+    refresh_count: usize,
+    cooldown_counts: Vec<usize>,
 }
 
 impl SchedulerStatus {
-    fn refreshing(&self) -> usize {
-        self.refreshing
-    }
-
-    fn inc_refreshing(&mut self) {
-        match self.refreshing.checked_add(1) {
-            Some(next) => self.refreshing = next,
-            None => {
-                error!(
-                    current = self.refreshing,
-                    "SchedulerStatus.refreshing overflow"
-                );
-                debug_assert!(false, "SchedulerStatus.refreshing overflow");
-            }
+    fn new(model_count: usize) -> Self {
+        Self {
+            refresh_count: 0,
+            cooldown_counts: vec![0; model_count],
         }
     }
 
-    fn dec_refreshing(&mut self) {
-        match self.refreshing.checked_sub(1) {
-            Some(next) => self.refreshing = next,
-            None => {
-                error!("SchedulerStatus.refreshing underflow");
-                debug_assert!(false, "SchedulerStatus.refreshing underflow");
-            }
-        }
+    fn refresh_count(&self) -> usize {
+        self.refresh_count
+    }
+
+    fn cooldown_count(&self, model_index: ModelIndex) -> usize {
+        self.cooldown_counts.get(model_index).copied().unwrap_or(0)
+    }
+
+    fn inc_refresh_count(&mut self) {
+        let Some(next) = self.refresh_count.checked_add(1) else {
+            error!(current = self.refresh_count, "refresh_count overflow");
+            return;
+        };
+        self.refresh_count = next;
+    }
+
+    fn dec_refresh_count(&mut self) {
+        let Some(next) = self.refresh_count.checked_sub(1) else {
+            error!("refresh_count underflow");
+            self.refresh_count = 0;
+            return;
+        };
+        self.refresh_count = next;
+    }
+
+    fn inc_cooldown_count(&mut self, model_index: ModelIndex) {
+        let Some(slot) = self.cooldown_counts.get_mut(model_index) else {
+            return;
+        };
+        let Some(next) = slot.checked_add(1) else {
+            error!(model_index, current = *slot, "cooldown_count overflow");
+            return;
+        };
+        *slot = next;
+    }
+
+    fn dec_cooldown_count(&mut self, model_index: ModelIndex) {
+        let Some(slot) = self.cooldown_counts.get_mut(model_index) else {
+            return;
+        };
+        let Some(next) = slot.checked_sub(1) else {
+            error!(model_index, "cooldown_count underflow");
+            *slot = 0;
+            return;
+        };
+        *slot = next;
     }
 }
 
@@ -171,14 +263,8 @@ pub struct ResourceScheduler<R: Schedulable> {
     creds: HashMap<CredentialId, ResourceEntry<R>>,
     queues: Vec<ModelQueue>,
     waiting_room: BinaryHeap<CooldownTicket>,
-    cooldown_map: HashMap<(CredentialId, ModelIndex), Instant>,
+    model_count: usize,
     status: SchedulerStatus,
-}
-
-impl<R: Schedulable> Default for ResourceScheduler<R> {
-    fn default() -> Self {
-        Self::new(0)
-    }
 }
 
 impl<R: Schedulable> ResourceScheduler<R> {
@@ -187,19 +273,25 @@ impl<R: Schedulable> ResourceScheduler<R> {
             creds: HashMap::new(),
             queues: vec![ModelQueue::default(); model_count],
             waiting_room: BinaryHeap::new(),
-            cooldown_map: HashMap::new(),
-            status: SchedulerStatus::default(),
+            model_count,
+            status: SchedulerStatus::new(model_count),
         }
     }
 
+    /// Adds a credential to the scheduler.
+    ///
+    /// Re-adding an existing `id` is treated as an external replacement:
+    /// all runtime state tracked by the scheduler (refreshing, cooldowns,
+    /// dynamically disabled capabilities) is discarded and rebuilt from the
+    /// supplied resource plus `initial_caps_bits`.
     pub fn add_credential(&mut self, id: CredentialId, resource: R, initial_caps_bits: u64) {
-        let initial_caps = ModelCapabilities::from_bits(initial_caps_bits);
-        let caps = self.creds.get(&id).map(|c| c.caps).unwrap_or(initial_caps);
-
-        let replaced = self.creds.insert(id, ResourceEntry::new(resource, caps));
-        if replaced.is_some_and(|entry| entry.is_refreshing()) {
-            self.status.dec_refreshing();
+        if let Some(mut old) = self.creds.remove(&id) {
+            old.detach(&mut self.status);
         }
+
+        let caps = ModelCapabilities::from_bits(initial_caps_bits);
+        self.creds
+            .insert(id, ResourceEntry::new(resource, caps, self.model_count));
 
         for (index, queue) in self.queues.iter_mut().enumerate() {
             if caps.supports(index) {
@@ -215,19 +307,20 @@ impl<R: Schedulable> ResourceScheduler<R> {
     /// This preserves dynamic runtime state stored by the scheduler, such as
     /// capabilities and cooldown bookkeeping.
     pub fn complete_refresh(&mut self, id: CredentialId, resource: R) {
-        let Some((caps, was_refreshing)) = self
-            .creds
+        let Self {
+            creds,
+            status,
+            queues,
+            ..
+        } = self;
+        let Some(caps) = creds
             .get_mut(&id)
-            .map(|cred| cred.complete_refresh(resource))
+            .map(|cred| cred.complete_refresh(resource, status))
         else {
             return;
         };
 
-        if was_refreshing {
-            self.status.dec_refreshing();
-        }
-
-        for (index, queue) in self.queues.iter_mut().enumerate() {
+        for (index, queue) in queues.iter_mut().enumerate() {
             if caps.supports(index) {
                 queue.push_back(id);
             }
@@ -311,7 +404,7 @@ impl<R: Schedulable> ResourceScheduler<R> {
             return LeaseStatus::Refreshing;
         }
 
-        if self.is_model_cooling(id, model_index) {
+        if cred.is_cooling(model_index) {
             return LeaseStatus::Cooling;
         }
 
@@ -339,18 +432,24 @@ impl<R: Schedulable> ResourceScheduler<R> {
     }
 
     fn insert_cooldown(&mut self, id: CredentialId, model_index: ModelIndex, cooldown: Duration) {
+        let Self {
+            creds,
+            status,
+            waiting_room,
+            ..
+        } = self;
+        let Some(cred) = creds.get_mut(&id) else {
+            return;
+        };
         let deadline = Instant::now() + cooldown;
-        self.cooldown_map.insert((id, model_index), deadline);
-        self.waiting_room
-            .push(CooldownTicket(Reverse(deadline), id, model_index));
+        cred.set_cooldown(model_index, deadline, status);
+        waiting_room.push(CooldownTicket(Reverse(deadline), id, model_index));
     }
 
     pub fn mark_refreshing(&mut self, id: CredentialId) {
-        if let Some(cred) = self.creds.get_mut(&id)
-            && !cred.is_refreshing()
-        {
-            cred.mark_refreshing();
-            self.status.inc_refreshing();
+        let Self { creds, status, .. } = self;
+        if let Some(cred) = creds.get_mut(&id) {
+            cred.mark_refreshing(status);
         }
         self.clear_cooldowns_for(id);
     }
@@ -371,14 +470,9 @@ impl<R: Schedulable> ResourceScheduler<R> {
     }
 
     pub fn delete_credential(&mut self, id: CredentialId) {
-        if self
-            .creds
-            .remove(&id)
-            .is_some_and(|entry| entry.is_refreshing())
-        {
-            self.status.dec_refreshing();
+        if let Some(mut entry) = self.creds.remove(&id) {
+            entry.detach(&mut self.status);
         }
-        self.clear_cooldowns_for(id);
     }
 
     /// Returns a reference to the inner resource for the given credential.
@@ -406,16 +500,18 @@ impl<R: Schedulable> ResourceScheduler<R> {
     }
 
     pub fn stats(&self, model_mask: u64) -> AssignmentStats {
-        let queue_len = self
-            .index_from_mask(model_mask)
+        let model_index = self.index_from_mask(model_mask);
+        let queue_len = model_index
             .and_then(|i| self.queues.get(i).map(ModelQueue::len))
             .unwrap_or(0);
 
         AssignmentStats {
             total_creds: self.creds.len(),
             queue_len,
-            refreshing: self.status.refreshing(),
-            cooldowns: self.cooldown_map.len(),
+            refreshing: self.status.refresh_count(),
+            cooldowns: model_index
+                .map(|i| self.status.cooldown_count(i))
+                .unwrap_or(0),
             ..Default::default()
         }
     }
@@ -432,35 +528,36 @@ impl<R: Schedulable> ResourceScheduler<R> {
     }
 
     fn process_waiting_room(&mut self) {
+        let Self {
+            waiting_room,
+            creds,
+            queues,
+            status,
+            ..
+        } = self;
         let now = Instant::now();
 
-        while self.waiting_room.peek().is_some_and(|t| (t.0).0 <= now) {
+        while waiting_room.peek().is_some_and(|t| (t.0).0 <= now) {
             let CooldownTicket(Reverse(ticket_deadline), credential_id, model_index) =
-                self.waiting_room.pop().expect("peek guaranteed existence");
+                waiting_room.pop().expect("peek guaranteed existence");
 
-            match self.cooldown_map.entry((credential_id, model_index)) {
-                std::collections::hash_map::Entry::Occupied(entry)
-                    if ticket_deadline >= *entry.get() =>
-                {
-                    let ((reclaimed_cred_id, reclaimed_model_index), _) = entry.remove_entry();
-                    if let Some(target_queue) = self.queues.get_mut(reclaimed_model_index) {
-                        target_queue.push_back(reclaimed_cred_id);
-                    }
-                }
-                _ => {}
+            let Some(cred) = creds.get_mut(&credential_id) else {
+                continue;
+            };
+            if cred.try_reclaim_cooldown(model_index, ticket_deadline, status)
+                && let Some(target_queue) = queues.get_mut(model_index)
+            {
+                target_queue.push_back(credential_id);
             }
         }
     }
 
-    fn is_model_cooling(&self, id: CredentialId, model_index: ModelIndex) -> bool {
-        match self.cooldown_map.get(&(id, model_index)) {
-            Some(deadline) => Instant::now() < *deadline,
-            None => false,
-        }
-    }
-
     fn clear_cooldowns_for(&mut self, id: CredentialId) {
-        self.cooldown_map.retain(|(cid, _), _| *cid != id);
+        let Self { creds, status, .. } = self;
+        let Some(cred) = creds.get_mut(&id) else {
+            return;
+        };
+        cred.clear_cooldowns(status);
     }
 }
 
@@ -565,15 +662,15 @@ mod tests {
     }
 
     #[test]
-    fn readd_after_refresh_preserves_disabled_caps() {
+    fn readd_same_id_resets_disabled_caps() {
         let mut mgr = Mgr::new(2);
         mgr.add_credential(1, MockResource(false), all_caps());
         mgr.mark_model_unsupported(1, mask(1));
 
-        // re-add with full caps — disabled bit should stick
+        // re-add with full caps — runtime-disabled bit should be reset
         mgr.add_credential(1, MockResource(false), all_caps());
 
-        assert!(mgr.get_assigned(mask(1), None).assigned.is_none());
+        assert_eq!(mgr.get_assigned(mask(1), None).assigned.unwrap().0, 1);
         assert_eq!(mgr.get_assigned(mask(0), None).assigned.unwrap().0, 1);
     }
 
@@ -647,6 +744,21 @@ mod tests {
         assert_eq!(mgr.stats(mask(0)).refreshing, 0);
     }
 
+    #[test]
+    fn readd_same_id_resets_refreshing_state() {
+        let mut mgr = Mgr::new(1);
+        mgr.add_credential(1, MockResource(false), caps_for(&[0]));
+        mgr.mark_refreshing(1);
+
+        assert!(mgr.is_refreshing(1));
+
+        mgr.add_credential(1, MockResource(false), caps_for(&[0]));
+
+        assert!(!mgr.is_refreshing(1));
+        assert_eq!(mgr.stats(mask(0)).refreshing, 0);
+        assert_eq!(mgr.get_assigned(mask(0), None).assigned.unwrap().0, 1);
+    }
+
     // ── PerModel cooldown ─────────────────────────────────────────
 
     #[test]
@@ -685,6 +797,25 @@ mod tests {
 
         let result = mgr.get_assigned(mask(0), None);
         assert_eq!(result.stats.queue_len, 1, "credential duplicated in queue");
+    }
+
+    #[test]
+    fn readd_same_id_resets_cooldown_state() {
+        let mut mgr = Mgr::new(1);
+        mgr.add_credential(1, MockResource(false), caps_for(&[0]));
+        mgr.report_rate_limit(1, mask(0), Duration::from_millis(10));
+
+        assert_eq!(mgr.stats(mask(0)).cooldowns, 1);
+        assert!(mgr.get_assigned(mask(0), None).assigned.is_none());
+
+        mgr.add_credential(1, MockResource(false), caps_for(&[0]));
+
+        assert_eq!(mgr.stats(mask(0)).cooldowns, 0);
+        assert_eq!(mgr.get_assigned(mask(0), None).assigned.unwrap().0, 1);
+
+        std::thread::sleep(Duration::from_millis(20));
+        let result = mgr.get_assigned(mask(0), None);
+        assert_eq!(result.stats.cooldowns, 0);
     }
 
     // ── PerCredential cooldown ────────────────────────────────────

@@ -20,19 +20,20 @@ const SSE_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 /// Build SSE stream response.
 pub(super) fn build_stream_response(upstream_resp: reqwest::Response) -> impl IntoResponse {
     let raw_stream = upstream_resp.bytes_stream().eventsource();
-    let timed_stream =
-        transform_stream(raw_stream)
-            .timeout(SSE_IDLE_TIMEOUT)
-            .map(|item| match item {
+    let timed_stream = transform_stream(raw_stream).timeout(SSE_IDLE_TIMEOUT).map(
+        |item| -> Result<_, Box<CodexError>> {
+            match item {
                 Ok(Ok(event)) => Ok(event),
-                Ok(Err(e)) => Err(CodexError::StreamProtocolError(e.to_string())),
+                Ok(Err(e)) => Err(Box::new(CodexError::StreamProtocolError(e.to_string()))),
                 Err(_) => {
                     error!("Upstream Codex SSE stream timed out (idle > 60s)");
-                    Err(CodexError::StreamProtocolError(
+                    Err(Box::new(CodexError::StreamProtocolError(
                         "Stream idle timeout".to_string(),
-                    ))
+                    )))
                 }
-            });
+            }
+        },
+    );
 
     Sse::new(timed_stream).keep_alive(KeepAlive::default())
 }

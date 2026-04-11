@@ -46,7 +46,7 @@ async fn geminicli_response_route_returns_413_for_oversized_body() {
     );
     let app = pollux::server::router::pollux_router(state);
 
-    let oversized_input = "a".repeat(30 * 1024 * 1024 + 1024);
+    let oversized_input = "a".repeat(50 * 1024 * 1024 + 1024);
     let oversized_payload = format!(r#"{{"input":"{oversized_input}"}}"#);
     let uri = format!("/geminicli/v1beta/models/{model}:generateContent");
 

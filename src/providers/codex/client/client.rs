@@ -51,7 +51,7 @@ impl CodexClient {
 
     fn endpoints_for_base(base: Url) -> ProviderEndpoints {
         ProviderEndpoints::new(
-            base,
+            &base,
             "./backend-api/codex/responses",
             None,
             "./backend-api/codex/responses",
@@ -139,19 +139,17 @@ impl CodexClient {
 
             match &action {
                 ActionForError::RateLimit(duration) => {
-                    handle
-                        .report_rate_limit(lease.id, model_mask, *duration)
-                        .await;
+                    handle.report_rate_limit(lease.id, model_mask, *duration);
                     // Optionally, could add a log here about when to retry
                 }
                 ActionForError::Ban => {
-                    handle.report_baned(lease.id).await;
+                    handle.report_baned(lease.id);
                 }
                 ActionForError::ModelUnsupported => {
-                    handle.report_model_unsupported(lease.id, model_mask).await;
+                    handle.report_model_unsupported(lease.id, model_mask);
                 }
                 ActionForError::Invalid => {
-                    handle.report_invalid(lease.id).await;
+                    handle.report_invalid(lease.id);
                 }
                 ActionForError::None => {
                     // Do nothing

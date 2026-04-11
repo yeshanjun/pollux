@@ -25,7 +25,7 @@ pub struct AuthCallbackQuery {
 
 /// GET /codex/auth
 ///
-/// Starts the Codex OAuth2 PKCE flow and redirects the browser to the OpenAI auth page.
+/// Starts the Codex `OAuth2` PKCE flow and redirects the browser to the `OpenAI` auth page.
 pub async fn codex_oauth_entry(
     State(state): State<PolluxState>,
     jar: PrivateCookieJar,
@@ -36,12 +36,12 @@ pub async fn codex_oauth_entry(
     let jar = jar
         .add(build_cookie(
             CSRF_COOKIE,
-            csrf_token.secret().to_string(),
+            csrf_token.secret().clone(),
             !state.insecure_cookie,
         ))
         .add(build_cookie(
             PKCE_COOKIE,
-            verifier.secret().to_string(),
+            verifier.secret().clone(),
             !state.insecure_cookie,
         ));
 
@@ -61,11 +61,7 @@ pub async fn codex_oauth_callback(
     match result {
         Ok(token_response) => {
             // Hand off to the Codex actor for identity extraction + persistence + activation.
-            state
-                .providers
-                .codex
-                .submit_trusted_oauth(token_response)
-                .await;
+            state.providers.codex.submit_trusted_oauth(token_response);
             info!("Codex OAuth callback accepted");
             (jar, (StatusCode::ACCEPTED, "Success")).into_response()
         }

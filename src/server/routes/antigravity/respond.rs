@@ -29,9 +29,10 @@ pub async fn build_json_response(
     Ok((status, Json(response_body)))
 }
 
+#[must_use]
 pub fn build_stream_response(
     upstream_resp: reqwest::Response,
-    state: PolluxState,
+    state: &PolluxState,
 ) -> impl IntoResponse {
     let sniffer = state.providers.antigravity_thoughtsig.build_sniffer();
     let raw_stream = upstream_resp.bytes_stream().eventsource();

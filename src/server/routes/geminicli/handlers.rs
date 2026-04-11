@@ -21,7 +21,7 @@ pub async fn gemini_cli_handler(
         .await?;
 
     if ctx.stream {
-        Ok(build_stream_response(upstream_resp, state.clone()).into_response())
+        Ok(build_stream_response(upstream_resp, &state).into_response())
     } else {
         Ok(build_json_response(upstream_resp, &state)
             .await

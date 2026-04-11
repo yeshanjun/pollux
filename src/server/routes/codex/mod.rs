@@ -25,7 +25,7 @@ pub struct CodexContext {
     pub model: String,
     pub stream: bool,
     pub model_mask: u64,
-    /// AHash of `session_id`, used as a routing/cache key to pin a session to the same account.
+    /// `AHash` of `session_id`, used as a routing/cache key to pin a session to the same account.
     pub route_key: Option<u64>,
 }
 

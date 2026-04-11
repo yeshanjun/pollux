@@ -40,7 +40,7 @@ impl Providers {
             "Provider defaults loaded"
         );
         info!(
-            geminicli_proxy = %geminicli_cfg.proxy.as_ref().map(|u| u.as_str()).unwrap_or("<none>"),
+            geminicli_proxy = %geminicli_cfg.proxy.as_ref().map(url::Url::as_str).unwrap_or("<none>"),
             geminicli_enable_multiplexing = geminicli_cfg.enable_multiplexing,
             geminicli_retry_max_times = geminicli_cfg.retry_max_times,
             geminicli_oauth_tps = geminicli_cfg.oauth_tps,
@@ -50,7 +50,7 @@ impl Providers {
 
         info!(
             codex_custom_api_url = %codex_cfg.custom_api_url,
-            codex_proxy = %codex_cfg.proxy.as_ref().map(|u| u.as_str()).unwrap_or("<none>"),
+            codex_proxy = %codex_cfg.proxy.as_ref().map(url::Url::as_str).unwrap_or("<none>"),
             codex_enable_multiplexing = codex_cfg.enable_multiplexing,
             codex_retry_max_times = codex_cfg.retry_max_times,
             codex_oauth_tps = codex_cfg.oauth_tps,
@@ -60,7 +60,7 @@ impl Providers {
 
         info!(
             antigravity_api_url = %antigravity_cfg.api_url.as_str(),
-            antigravity_proxy = %antigravity_cfg.proxy.as_ref().map(|u| u.as_str()).unwrap_or("<none>"),
+            antigravity_proxy = %antigravity_cfg.proxy.as_ref().map(url::Url::as_str).unwrap_or("<none>"),
             antigravity_enable_multiplexing = antigravity_cfg.enable_multiplexing,
             antigravity_retry_max_times = antigravity_cfg.retry_max_times,
             antigravity_oauth_tps = antigravity_cfg.oauth_tps,

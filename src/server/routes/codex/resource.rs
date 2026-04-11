@@ -24,15 +24,12 @@ pub async fn codex_resource_add(
     State(state): State<PolluxState>,
     payload: Result<Json<Vec<CodexResourceSeed>>, JsonRejection>,
 ) -> axum::response::Response {
-    let Json(seeds) = match payload {
-        Ok(payload) => payload,
-        Err(_) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                "数据格式不允许：请求体必须是 JSON 数组，例如 [{\"refresh_token\":\"...\"}]",
-            )
-                .into_response();
-        }
+    let Ok(Json(seeds)) = payload else {
+        return (
+            StatusCode::BAD_REQUEST,
+            "Invalid payload format: The request body must be a JSON array. For example: [{\"refresh_token\":\"...\"}]",
+        )
+            .into_response();
     };
 
     let mut seen: HashSet<String> = HashSet::new();
@@ -45,10 +42,6 @@ pub async fn codex_resource_add(
         .filter(|t| seen.insert(t.clone()))
         .collect();
 
-    state
-        .providers
-        .codex
-        .submit_refresh_tokens(refresh_tokens)
-        .await;
+    state.providers.codex.submit_refresh_tokens(refresh_tokens);
     (StatusCode::ACCEPTED, "Success").into_response()
 }

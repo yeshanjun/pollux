@@ -17,11 +17,11 @@ pub enum ActionForError {
 pub trait MappingAction: std::fmt::Debug + DeserializeOwned + Serialize {
     fn try_match_rule(&self, status: StatusCode) -> Option<ActionForError>;
 
+    #[must_use]
     fn action_from_status(status: StatusCode) -> ActionForError {
         match status {
             StatusCode::TOO_MANY_REQUESTS => ActionForError::RateLimit(Duration::from_secs(60)),
-            StatusCode::FORBIDDEN => ActionForError::Ban,
-            StatusCode::PAYMENT_REQUIRED => ActionForError::Ban,
+            StatusCode::FORBIDDEN | StatusCode::PAYMENT_REQUIRED => ActionForError::Ban,
             StatusCode::UNAUTHORIZED => ActionForError::Invalid,
             _ => ActionForError::None,
         }

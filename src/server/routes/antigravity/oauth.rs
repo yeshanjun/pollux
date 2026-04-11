@@ -18,7 +18,7 @@ const PKCE_COOKIE: &str = "antigravity_oauth_pkce_verifier";
 
 /// GET /antigravity/auth
 ///
-/// Starts the Antigravity OAuth2 PKCE flow and redirects the browser to the configured auth URL.
+/// Starts the Antigravity `OAuth2` PKCE flow and redirects the browser to the configured auth URL.
 pub async fn antigravity_oauth_entry(
     State(state): State<PolluxState>,
     jar: PrivateCookieJar,
@@ -32,12 +32,12 @@ pub async fn antigravity_oauth_entry(
     let jar = jar
         .add(build_cookie(
             CSRF_COOKIE,
-            csrf_token.secret().to_string(),
+            csrf_token.secret().clone(),
             !state.insecure_cookie,
         ))
         .add(build_cookie(
             PKCE_COOKIE,
-            verifier.secret().to_string(),
+            verifier.secret().clone(),
             !state.insecure_cookie,
         ));
 
@@ -81,8 +81,7 @@ pub async fn antigravity_oauth_callback_root(
             state
                 .providers
                 .antigravity
-                .submit_trusted_oauth(token_response)
-                .await;
+                .submit_trusted_oauth(token_response);
             info!("Antigravity OAuth callback accepted");
             (jar, (StatusCode::ACCEPTED, "Success")).into_response()
         }
@@ -129,7 +128,7 @@ async fn process_oauth_exchange(
 
     let refresh_token = token_response
         .refresh_token()
-        .map(|t| t.secret().to_string())
+        .map(|t| t.secret().clone())
         .unwrap_or_default();
 
     if refresh_token.trim().is_empty() {

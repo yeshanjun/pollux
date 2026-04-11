@@ -34,12 +34,12 @@ pub async fn google_oauth_entry(
     let jar = jar
         .add(build_cookie(
             CSRF_COOKIE,
-            csrf_token.secret().to_string(),
+            csrf_token.secret().clone(),
             !state.insecure_cookie,
         ))
         .add(build_cookie(
             PKCE_COOKIE,
-            verifier.secret().to_string(),
+            verifier.secret().clone(),
             !state.insecure_cookie,
         ));
 
@@ -128,13 +128,13 @@ pub async fn process_oauth_exchange(
     .await
     .map_err(|e| OauthError::Flow {
         code: "TOKEN_EXCHANGE_FAILED".to_string(),
-        message: format!("Token exchange failed: {}", e),
+        message: format!("Token exchange failed: {e}"),
         details: None,
     })?;
 
     let refresh_token = token_response
         .refresh_token()
-        .map(|t| t.secret().to_string())
+        .map(|t| t.secret().clone())
         .unwrap_or_default();
     if refresh_token.is_empty() {
         return Err(OauthError::Flow {
@@ -144,6 +144,6 @@ pub async fn process_oauth_exchange(
         }
         .into());
     }
-    handle.submit_trusted_oauth(token_response).await;
+    handle.submit_trusted_oauth(token_response);
     Ok(())
 }

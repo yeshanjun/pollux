@@ -34,7 +34,7 @@ where
             })?;
 
         // Determine model and optional rpc from the last path segment.
-        let last_seg = path.split('/').next_back().map(|s| s.to_string());
+        let last_seg = path.split('/').next_back().map(ToString::to_string);
         let Some(last_seg) = last_seg else {
             return Err(GeminiCliError::RequestRejected {
                 status: StatusCode::BAD_REQUEST,

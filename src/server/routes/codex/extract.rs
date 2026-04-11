@@ -41,18 +41,18 @@ where
     ///
     /// Notes:
     /// - We intentionally do not `trim()` or otherwise normalize `model`; matching is exact.
-    async fn from_request(req: Request, _state: &S) -> Result<Self, Self::Rejection> {
+    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
         // Split request so we can extract headers from Parts, then reassemble for Json.
         let (mut parts, body) = req.into_parts();
         debug!(raw_headers = ?parts.headers, "[Codex] Incoming raw request headers");
 
         // Rejection = Infallible, so unwrap is safe.
-        let codex_headers = OpenaiRequestHeaders::from_request_parts(&mut parts, _state)
+        let codex_headers = OpenaiRequestHeaders::from_request_parts(&mut parts, state)
             .await
             .unwrap();
 
         let req = Request::from_parts(parts, body);
-        let Json(body) = Json::<OpenaiRequestBody>::from_request(req, _state).await?;
+        let Json(body) = Json::<OpenaiRequestBody>::from_request(req, state).await?;
 
         let model = body.model.as_str();
         if model.is_empty() {
@@ -66,7 +66,7 @@ where
                 },
                 debug_message: None,
             });
-        };
+        }
 
         let stream = body.stream;
 

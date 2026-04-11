@@ -89,7 +89,9 @@ impl CodexRequestHeaders {
 
     /// Convert into a `reqwest::header::HeaderMap` for the upstream HTTP call.
     pub(crate) fn into_header_map(self) -> HeaderMap {
-        use header_names::*;
+        use header_names::{
+            CHATGPT_ACCOUNT_ID, ORIGINATOR, SESSION_ID, X_CLIENT_REQUEST_ID, X_CODEX_TURN_METADATA,
+        };
 
         /// Insert required headers into a `HeaderMap` in a declarative style.
         macro_rules! set_headers {
@@ -135,7 +137,7 @@ impl<S: Send + Sync> FromRequestParts<S> for OpenaiRequestHeaders {
     type Rejection = Infallible;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        use header_names::*;
+        use header_names::{SESSION_ID, X_CODEX_TURN_METADATA};
 
         let headers = &parts.headers;
 
@@ -143,7 +145,7 @@ impl<S: Send + Sync> FromRequestParts<S> for OpenaiRequestHeaders {
             headers
                 .get(name)
                 .and_then(|v| v.to_str().ok())
-                .map(|s| s.to_string())
+                .map(ToString::to_string)
         };
 
         // session_id: single source of truth, falls back to a generated UUIDv4.

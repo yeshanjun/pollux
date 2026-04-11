@@ -74,7 +74,7 @@ impl AntigravityActorHandle {
         .map_err(|e| PolluxError::RactorError(format!("GetCredential RPC failed: {e}")))
     }
 
-    pub async fn report_rate_limit(&self, id: CredentialId, model_mask: u64, cooldown: Duration) {
+    pub fn report_rate_limit(&self, id: CredentialId, model_mask: u64, cooldown: Duration) {
         let _ = ractor::cast!(
             self.actor,
             AntigravityActorMessage::ReportRateLimit {
@@ -85,23 +85,23 @@ impl AntigravityActorHandle {
         );
     }
 
-    pub async fn report_invalid(&self, id: CredentialId) {
+    pub fn report_invalid(&self, id: CredentialId) {
         let _ = ractor::cast!(self.actor, AntigravityActorMessage::ReportInvalid { id });
     }
 
-    pub async fn report_model_unsupported(&self, id: CredentialId, model_mask: u64) {
+    pub fn report_model_unsupported(&self, id: CredentialId, model_mask: u64) {
         let _ = ractor::cast!(
             self.actor,
             AntigravityActorMessage::ReportModelUnsupported { id, model_mask }
         );
     }
 
-    pub async fn report_baned(&self, id: CredentialId) {
+    pub fn report_baned(&self, id: CredentialId) {
         let _ = ractor::cast!(self.actor, AntigravityActorMessage::ReportBaned { id });
     }
 
     /// Submit a trusted OAuth token response to the actor.
-    pub(crate) async fn submit_trusted_oauth(&self, token_response: OauthTokenResponse) {
+    pub(crate) fn submit_trusted_oauth(&self, token_response: OauthTokenResponse) {
         let _ = ractor::cast!(
             self.actor,
             AntigravityActorMessage::SubmitTrustedOauth(token_response)
@@ -109,7 +109,7 @@ impl AntigravityActorHandle {
     }
 
     /// Submit refresh tokens as 0-trust seeds.
-    pub(crate) async fn submit_refresh_tokens(&self, refresh_tokens: Vec<String>) {
+    pub(crate) fn submit_refresh_tokens(&self, refresh_tokens: Vec<String>) {
         let seeds: Vec<AntigravityRefreshTokenSeed> = refresh_tokens
             .into_iter()
             .filter_map(AntigravityRefreshTokenSeed::new)
@@ -204,8 +204,7 @@ impl Actor for AntigravityActor {
     ) -> Result<(), ActorProcessingErr> {
         match message {
             AntigravityActorMessage::GetCredential(model_mask, rp) => {
-                self.handle_get_credential(myself.clone(), state, rp, model_mask)
-                    .await;
+                self.handle_get_credential(myself.clone(), state, rp, model_mask);
             }
 
             AntigravityActorMessage::ReportRateLimit {
@@ -220,25 +219,22 @@ impl Actor for AntigravityActor {
             }
 
             AntigravityActorMessage::ReportInvalid { id } => {
-                self.handle_report_invalid(myself.clone(), state, vec![id])
-                    .await;
+                self.handle_report_invalid(myself.clone(), state, vec![id]);
             }
 
             AntigravityActorMessage::ReportBaned { id } => {
-                self.handle_report_baned(state, id).await;
+                self.handle_report_baned(state, id);
             }
 
             AntigravityActorMessage::SubmitTrustedOauth(token_response) => {
-                self.handle_submit_trusted_oauth(state, token_response)
-                    .await;
+                self.handle_submit_trusted_oauth(state, token_response);
             }
             AntigravityActorMessage::SubmitUntrustedSeeds(seeds) => {
-                self.handle_submit_untrusted_seeds(state, seeds).await;
+                self.handle_submit_untrusted_seeds(state, seeds);
             }
 
             AntigravityActorMessage::RefreshComplete { outcome } => {
-                self.handle_refresh_complete(myself.clone(), state, outcome)
-                    .await;
+                self.handle_refresh_complete(myself.clone(), state, outcome);
             }
             AntigravityActorMessage::ActivateCredential { id, credential } => {
                 let project = credential.project_id().to_string();
@@ -291,7 +287,7 @@ impl AntigravityActor {
         }
     }
 
-    async fn handle_get_credential(
+    fn handle_get_credential(
         &self,
         myself: ActorRef<AntigravityActorMessage>,
         state: &mut AntigravityActorState,
@@ -304,8 +300,7 @@ impl AntigravityActor {
         let stats = &assignment.stats;
 
         if !assignment.refresh_ids.is_empty() {
-            self.handle_report_invalid(myself, state, assignment.refresh_ids)
-                .await;
+            self.handle_report_invalid(myself, state, assignment.refresh_ids);
         }
 
         if let Some(assigned) = assignment.assigned {
@@ -357,7 +352,7 @@ impl AntigravityActor {
         );
     }
 
-    async fn handle_report_invalid(
+    fn handle_report_invalid(
         &self,
         myself: ActorRef<AntigravityActorMessage>,
         state: &mut AntigravityActorState,
@@ -397,7 +392,7 @@ impl AntigravityActor {
         });
     }
 
-    async fn handle_report_baned(&self, state: &mut AntigravityActorState, id: CredentialId) {
+    fn handle_report_baned(&self, state: &mut AntigravityActorState, id: CredentialId) {
         let project = state
             .manager
             .get_credential(id)
@@ -416,7 +411,7 @@ impl AntigravityActor {
         info!(id, project, removed_from_mem = removed, "Credential banned");
     }
 
-    async fn handle_submit_trusted_oauth(
+    fn handle_submit_trusted_oauth(
         &self,
         state: &mut AntigravityActorState,
         token_response: OauthTokenResponse,
@@ -440,7 +435,7 @@ impl AntigravityActor {
         });
     }
 
-    async fn handle_submit_untrusted_seeds(
+    fn handle_submit_untrusted_seeds(
         &self,
         state: &mut AntigravityActorState,
         seeds: Vec<AntigravityRefreshTokenSeed>,
@@ -461,7 +456,7 @@ impl AntigravityActor {
         });
     }
 
-    async fn handle_refresh_complete(
+    fn handle_refresh_complete(
         &self,
         myself: ActorRef<AntigravityActorMessage>,
         state: &mut AntigravityActorState,

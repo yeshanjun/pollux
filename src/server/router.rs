@@ -28,7 +28,7 @@ use std::time::Instant;
 use std::{sync::Arc, sync::LazyLock, time::Duration};
 use tracing::{error, info, warn};
 
-/// Global cookie signing/encryption key for PrivateCookieJar.
+/// Global cookie signing/encryption key for `PrivateCookieJar`.
 static COOKIE_KEY: LazyLock<Key> = LazyLock::new(Key::generate);
 
 const MAX_REQUEST_ID_LEN: usize = 128;
@@ -65,6 +65,7 @@ pub struct PolluxState {
 }
 
 impl PolluxState {
+    #[must_use]
     pub fn new(providers: Providers, pollux_key: Arc<str>, insecure_cookie: bool) -> Self {
         let geminicli_cfg = providers.geminicli_cfg.clone();
         let codex_cfg = providers.codex_cfg.clone();
@@ -92,15 +93,15 @@ impl PolluxState {
                 builder = builder.proxy(proxy);
             }
 
-            if !enable_multiplexing {
+            if enable_multiplexing {
+                builder = builder.http2_adaptive_window(true);
+            } else {
                 headers.insert(CONNECTION, HeaderValue::from_static("close"));
 
                 builder = builder
                     .http1_only()
                     .pool_max_idle_per_host(0)
                     .pool_idle_timeout(Duration::from_secs(0));
-            } else {
-                builder = builder.http2_adaptive_window(true);
             }
 
             builder
@@ -219,7 +220,7 @@ async fn access_log(req: Request, next: Next) -> Response {
     }
 
     let status = resp.status();
-    let latency_ms = start.elapsed().as_millis() as u64;
+    let latency_ms = start.elapsed().as_millis();
     let path = uri.path();
     let protocol = format_http_version(version);
 

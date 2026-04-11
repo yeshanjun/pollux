@@ -92,7 +92,7 @@ impl CodexActorHandle {
     }
 
     /// Report rate limit; the actor will cool down this credential before reuse.
-    pub async fn report_rate_limit(&self, id: CredentialId, model_mask: u64, cooldown: Duration) {
+    pub fn report_rate_limit(&self, id: CredentialId, model_mask: u64, cooldown: Duration) {
         let _ = ractor::cast!(
             self.actor,
             CodexActorMessage::ReportRateLimit {
@@ -104,12 +104,12 @@ impl CodexActorHandle {
     }
 
     /// Report invalid/expired access (401); the actor will refresh before reuse.
-    pub async fn report_invalid(&self, id: CredentialId) {
+    pub fn report_invalid(&self, id: CredentialId) {
         let _ = ractor::cast!(self.actor, CodexActorMessage::ReportInvalid { id });
     }
 
     /// Report that a credential does not support a model (e.g. 404).
-    pub async fn report_model_unsupported(&self, id: CredentialId, model_mask: u64) {
+    pub fn report_model_unsupported(&self, id: CredentialId, model_mask: u64) {
         let _ = ractor::cast!(
             self.actor,
             CodexActorMessage::ReportModelUnsupported { id, model_mask }
@@ -117,12 +117,12 @@ impl CodexActorHandle {
     }
 
     /// Report a credential as permanently banned/unusable; remove it entirely.
-    pub async fn report_baned(&self, id: CredentialId) {
+    pub fn report_baned(&self, id: CredentialId) {
         let _ = ractor::cast!(self.actor, CodexActorMessage::ReportBaned { id });
     }
 
     /// Submit a trusted OAuth token response to the actor for trusted ingest + persistence.
-    pub(crate) async fn submit_trusted_oauth(&self, token_response: OauthTokenResponse) {
+    pub(crate) fn submit_trusted_oauth(&self, token_response: OauthTokenResponse) {
         let _ = ractor::cast!(
             self.actor,
             CodexActorMessage::SubmitTrustedOauth(token_response)
@@ -130,7 +130,7 @@ impl CodexActorHandle {
     }
 
     /// Submit refresh tokens as 0-trust seeds. The actor will verify, then persist+activate.
-    pub(crate) async fn submit_refresh_tokens(&self, refresh_tokens: Vec<String>) {
+    pub(crate) fn submit_refresh_tokens(&self, refresh_tokens: Vec<String>) {
         let seeds: Vec<CodexRefreshTokenSeed> = refresh_tokens
             .into_iter()
             .filter_map(CodexRefreshTokenSeed::new)
@@ -237,8 +237,7 @@ impl Actor for CodexActor {
                 route_key,
                 reply,
             } => {
-                self.handle_get_credential(myself.clone(), state, reply, model_mask, route_key)
-                    .await;
+                self.handle_get_credential(myself.clone(), state, reply, model_mask, route_key);
             }
 
             CodexActorMessage::ReportRateLimit {
@@ -254,26 +253,23 @@ impl Actor for CodexActor {
             }
 
             CodexActorMessage::ReportInvalid { id } => {
-                self.handle_report_invalid(myself.clone(), state, vec![id])
-                    .await;
+                self.handle_report_invalid(myself.clone(), state, vec![id]);
             }
 
             CodexActorMessage::ReportBaned { id } => {
-                self.handle_report_baned(state, id).await;
+                self.handle_report_baned(state, id);
             }
 
             CodexActorMessage::SubmitTrustedOauth(token_response) => {
-                self.handle_submit_trusted_oauth(state, token_response)
-                    .await;
+                self.handle_submit_trusted_oauth(state, token_response);
             }
 
             CodexActorMessage::SubmitUntrustedSeeds(seeds) => {
-                self.handle_submit_untrusted_seeds(state, seeds).await;
+                self.handle_submit_untrusted_seeds(state, seeds);
             }
 
             CodexActorMessage::ProcessComplete { result } => {
-                self.handle_process_complete(myself.clone(), state, result)
-                    .await;
+                self.handle_process_complete(myself.clone(), state, result);
             }
 
             CodexActorMessage::ActivateCredential { id, credential } => {
@@ -329,7 +325,7 @@ impl CodexActor {
         }
     }
 
-    async fn handle_get_credential(
+    fn handle_get_credential(
         &self,
         myself: ActorRef<CodexActorMessage>,
         state: &mut CodexActorState,
@@ -343,8 +339,7 @@ impl CodexActor {
         let sched_us = start.elapsed().as_micros() as u64;
 
         if !assignment.refresh_ids.is_empty() {
-            self.handle_report_invalid(myself, state, assignment.refresh_ids)
-                .await;
+            self.handle_report_invalid(myself, state, assignment.refresh_ids);
         }
 
         let stats = state.manager.stats(model_mask);
@@ -406,7 +401,7 @@ impl CodexActor {
         );
     }
 
-    async fn handle_report_invalid(
+    fn handle_report_invalid(
         &self,
         myself: ActorRef<CodexActorMessage>,
         state: &mut CodexActorState,
@@ -452,7 +447,7 @@ impl CodexActor {
         });
     }
 
-    async fn handle_report_baned(&self, state: &mut CodexActorState, id: CredentialId) {
+    fn handle_report_baned(&self, state: &mut CodexActorState, id: CredentialId) {
         let account_id = state
             .manager
             .get_credential(id)
@@ -474,7 +469,7 @@ impl CodexActor {
         });
     }
 
-    async fn handle_submit_untrusted_seeds(
+    fn handle_submit_untrusted_seeds(
         &self,
         state: &mut CodexActorState,
         seeds: Vec<CodexRefreshTokenSeed>,
@@ -504,7 +499,7 @@ impl CodexActor {
         });
     }
 
-    async fn handle_submit_trusted_oauth(
+    fn handle_submit_trusted_oauth(
         &self,
         state: &mut CodexActorState,
         token_response: OauthTokenResponse,
@@ -526,7 +521,7 @@ impl CodexActor {
         });
     }
 
-    async fn handle_process_complete(
+    fn handle_process_complete(
         &self,
         myself: ActorRef<CodexActorMessage>,
         state: &mut CodexActorState,

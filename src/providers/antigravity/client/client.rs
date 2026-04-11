@@ -70,7 +70,7 @@ impl AntigravityClient {
 
     fn endpoints_for_base(base: Url) -> ProviderEndpoints {
         ProviderEndpoints::new(
-            base,
+            &base,
             "./v1internal:streamGenerateContent",
             Some("alt=sse"),
             "./v1internal:generateContent",
@@ -176,26 +176,22 @@ impl AntigravityClient {
 
                         match &action {
                             crate::providers::ActionForError::RateLimit(duration) => {
-                                handle
-                                    .report_rate_limit(assigned.id, model_mask, *duration)
-                                    .await;
+                                handle.report_rate_limit(assigned.id, model_mask, *duration);
                                 info!(
                                     "Project: {}, rate limited, retry in {:?}",
                                     assigned.project_id, duration
                                 );
                             }
                             crate::providers::ActionForError::Ban => {
-                                handle.report_baned(assigned.id).await;
+                                handle.report_baned(assigned.id);
                                 info!("Project: {}, banned", assigned.project_id);
                             }
                             crate::providers::ActionForError::ModelUnsupported => {
-                                handle
-                                    .report_model_unsupported(assigned.id, model_mask)
-                                    .await;
+                                handle.report_model_unsupported(assigned.id, model_mask);
                                 info!("Project: {}, model unsupported", assigned.project_id);
                             }
                             crate::providers::ActionForError::Invalid => {
-                                handle.report_invalid(assigned.id).await;
+                                handle.report_invalid(assigned.id);
                                 info!("Project: {}, invalid", assigned.project_id);
                             }
                             crate::providers::ActionForError::None => {}

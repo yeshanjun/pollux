@@ -44,7 +44,7 @@ where
                 let body_preview = match resp.bytes().await {
                     Ok(bytes) => {
                         let raw_body = String::from_utf8_lossy(&bytes);
-                        format!("{:.len$}", raw_body, len = UPSTREAM_BODY_PREVIEW_CHARS)
+                        format!("{raw_body:.UPSTREAM_BODY_PREVIEW_CHARS$}")
                     }
                     Err(e) => format!("<failed to read body: {e}>"),
                 };

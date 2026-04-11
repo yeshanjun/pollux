@@ -125,9 +125,8 @@ impl<R> ResourceEntry<R> {
 
     fn clear_cooldowns(&mut self, status: &mut SchedulerStatus) {
         for (idx, slot) in self.cooldowns.iter_mut().enumerate() {
-            if slot.is_some() {
+            if slot.take().is_some() {
                 status.dec_cooldown_count(idx);
-                *slot = None;
             }
         }
     }

@@ -257,16 +257,16 @@ impl Actor for GeminiCliActor {
                 self.handle_report_baned(state, id);
             }
             GeminiCliActorMessage::SubmitCredentials(creds_vec) => {
-                self.handle_submit_credentials(state, creds_vec);
+                Self::handle_submit_credentials(state, creds_vec);
             }
             GeminiCliActorMessage::SubmitTrustedOauth(token_response) => {
-                self.handle_submit_trusted_oauth(state, token_response);
+                Self::handle_submit_trusted_oauth(state, token_response);
             }
             GeminiCliActorMessage::SubmitUntrustedSeeds(seeds) => {
-                self.handle_submit_untrusted_seeds(state, seeds);
+                Self::handle_submit_untrusted_seeds(state, seeds);
             }
             GeminiCliActorMessage::ProcessComplete { result } => {
-                self.handle_process_complete(myself.clone(), state, result);
+                Self::handle_process_complete(&myself, state, result);
             }
             GeminiCliActorMessage::ActivateCredential { id, credential } => {
                 let project = credential.project_id().to_string();
@@ -330,7 +330,7 @@ impl GeminiCliActor {
         let start = std::time::Instant::now();
         let assignment = state.manager.get_assigned(model_mask, None);
         let sched_us = start.elapsed().as_micros() as u64;
-        let stats = &assignment.stats;
+        let sched_stats = &assignment.stats;
 
         if !assignment.refresh_ids.is_empty() {
             self.handle_report_invalid(myself, state, assignment.refresh_ids);
@@ -343,10 +343,10 @@ impl GeminiCliActor {
                 project = %assigned.project_id,
                 email = %assigned.email.as_deref().unwrap_or("-"),
                 model_mask = format_args!("0x{:016x}", model_mask),
-                queue = stats.queue_len,
-                total = stats.total_creds,
-                cooling = stats.cooldowns,
-                refreshing = stats.refreshing,
+                queue = sched_stats.queue_len,
+                total = sched_stats.total_creds,
+                cooling = sched_stats.cooldowns,
+                refreshing = sched_stats.refreshing,
                 "[GeminiCli] Credential assigned"
             );
             let _ = reply_port.send(Some(assigned));
@@ -355,13 +355,13 @@ impl GeminiCliActor {
 
         warn!(
             model_mask = format_args!("0x{:016x}", model_mask),
-            queue = stats.queue_len,
-            total = stats.total_creds,
-            cooling = stats.cooldowns,
-            refreshing = stats.refreshing,
-            skipped.cooling = stats.skipped_cooling,
-            skipped.refreshing = stats.skipped_refreshing,
-            skipped.expired = stats.skipped_expired,
+            queue = sched_stats.queue_len,
+            total = sched_stats.total_creds,
+            cooling = sched_stats.cooldowns,
+            refreshing = sched_stats.refreshing,
+            skipped.cooling = sched_stats.skipped_cooling,
+            skipped.refreshing = sched_stats.skipped_refreshing,
+            skipped.expired = sched_stats.skipped_expired,
             "No credential available"
         );
         let _ = reply_port.send(None);
@@ -465,7 +465,6 @@ impl GeminiCliActor {
     }
 
     fn handle_submit_credentials(
-        &self,
         state: &mut GeminiCliActorState,
         creds_vec: Vec<GeminiCliProfile>,
     ) {
@@ -474,7 +473,7 @@ impl GeminiCliActor {
         let processor_handle = state.processor_handle.clone();
         tokio::spawn(async move {
             for profile in creds_vec {
-                let pid = profile.project_id.to_string();
+                let pid = profile.project_id.clone();
                 let cred = GeminiCliResource::from(profile);
                 let job = CredentialJob {
                     cred,
@@ -492,7 +491,6 @@ impl GeminiCliActor {
     }
 
     fn handle_submit_trusted_oauth(
-        &self,
         state: &mut GeminiCliActorState,
         token_response: GoogleTokenResponse,
     ) {
@@ -524,7 +522,6 @@ impl GeminiCliActor {
     }
 
     fn handle_submit_untrusted_seeds(
-        &self,
         state: &mut GeminiCliActorState,
         seeds: Vec<GeminiCliRefreshTokenSeed>,
     ) {
@@ -557,8 +554,7 @@ impl GeminiCliActor {
     }
 
     fn handle_process_complete(
-        &self,
-        myself: ActorRef<GeminiCliActorMessage>,
+        myself: &ActorRef<GeminiCliActorMessage>,
         state: &mut GeminiCliActorState,
         result: CredentialProcessResult,
     ) {

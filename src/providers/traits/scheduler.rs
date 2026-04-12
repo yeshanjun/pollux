@@ -255,7 +255,7 @@ impl ModelQueue {
 
 /// Generic resource scheduler. Pure logic, no IO, no locks.
 ///
-/// All provider-specific scheduling (GeminiCli, Codex, Antigravity, …) is
+/// All provider-specific scheduling (`GeminiCli`, `Codex`, `Antigravity`, …) is
 /// unified here. The type parameter `R` controls what a managed resource looks
 /// like and how it produces a lease.
 pub struct ResourceScheduler<R: Schedulable> {
@@ -508,9 +508,7 @@ impl<R: Schedulable> ResourceScheduler<R> {
             total_creds: self.creds.len(),
             queue_len,
             refreshing: self.status.refresh_count(),
-            cooldowns: model_index
-                .map(|i| self.status.cooldown_count(i))
-                .unwrap_or(0),
+            cooldowns: model_index.map_or(0, |i| self.status.cooldown_count(i)),
             ..Default::default()
         }
     }

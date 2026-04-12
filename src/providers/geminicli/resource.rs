@@ -71,8 +71,8 @@ impl GeminiCliResource {
 
     /// Merge updates from any JSON-serializable payload into this resource.
     /// - Accepts any `T: Serialize` and converts to `serde_json::Value` internally.
-    /// - Supports both OAuth token response (access_token, expires_in)
-    ///   and full credential JSON (project_id, expiry, etc.).
+    /// - Supports both OAuth token response (`access_token`, `expires_in`)
+    ///   and full credential JSON (`project_id`, `expiry`, etc.).
     /// - Only updates fields present in the JSON; others remain unchanged.
     pub fn update_credential(&mut self, payload: impl Serialize) -> Result<(), PolluxError> {
         #[derive(Debug, Default, Deserialize)]

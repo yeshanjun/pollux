@@ -69,7 +69,7 @@ impl LeaseLabel for GeminiCliLease {
     fn fmt_label(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "id={}, project={}", self.id, self.project_id)?;
         if let Some(email) = self.email.as_deref() {
-            write!(f, ", email={}", email)?;
+            write!(f, ", email={email}")?;
         }
         Ok(())
     }
@@ -87,7 +87,7 @@ impl LeaseLabel for CodexLease {
     fn fmt_label(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "id={}, account={}", self.id, self.account_id)?;
         if let Some(email) = self.email.as_deref() {
-            write!(f, ", email={}", email)?;
+            write!(f, ", email={email}")?;
         }
         Ok(())
     }

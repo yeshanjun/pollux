@@ -35,7 +35,7 @@ impl CredentialOps {
         let id = self.db.create(ProviderCreate::GeminiCli(create)).await?;
 
         u64::try_from(id)
-            .map_err(|_| PolluxError::UnexpectedError(format!("Invalid credential id {}", id)))
+            .map_err(|_| PolluxError::UnexpectedError(format!("Invalid credential id {id}")))
     }
 
     pub async fn update_by_id(
@@ -45,7 +45,7 @@ impl CredentialOps {
     ) -> Result<(), PolluxError> {
         // Keep the same validation semantics: the DB layer uses `i64` ids.
         let _ = i64::try_from(id)
-            .map_err(|_| PolluxError::UnexpectedError(format!("Invalid credential id {}", id)))?;
+            .map_err(|_| PolluxError::UnexpectedError(format!("Invalid credential id {id}")))?;
 
         self.db
             .patch(ProviderPatch::GeminiCli { id, patch })
@@ -56,7 +56,7 @@ impl CredentialOps {
     pub async fn set_status(&self, id: CredentialId, status: bool) -> Result<(), PolluxError> {
         // Keep the same validation semantics: the DB layer uses `i64` ids.
         let _ = i64::try_from(id)
-            .map_err(|_| PolluxError::UnexpectedError(format!("Invalid credential id {}", id)))?;
+            .map_err(|_| PolluxError::UnexpectedError(format!("Invalid credential id {id}")))?;
         let patch = GeminiCliPatch {
             status: Some(status),
             ..Default::default()

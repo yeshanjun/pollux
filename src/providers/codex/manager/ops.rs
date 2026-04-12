@@ -30,7 +30,7 @@ impl CredentialOps {
         let id = self.db.create(ProviderCreate::Codex(create)).await?;
 
         u64::try_from(id)
-            .map_err(|_| PolluxError::UnexpectedError(format!("Invalid credential id {}", id)))
+            .map_err(|_| PolluxError::UnexpectedError(format!("Invalid credential id {id}")))
     }
 
     pub async fn update_by_id(
@@ -39,7 +39,7 @@ impl CredentialOps {
         patch: CodexPatch,
     ) -> Result<(), PolluxError> {
         let _ = i64::try_from(id)
-            .map_err(|_| PolluxError::UnexpectedError(format!("Invalid credential id {}", id)))?;
+            .map_err(|_| PolluxError::UnexpectedError(format!("Invalid credential id {id}")))?;
 
         self.db.patch(ProviderPatch::Codex { id, patch }).await?;
         Ok(())

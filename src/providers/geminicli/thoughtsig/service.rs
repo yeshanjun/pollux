@@ -36,7 +36,7 @@ impl GeminiThoughtSigService {
     }
 
     pub fn patch_request(&self, request: &mut GeminiGenerateContentRequest) {
-        patch_request(request, &self.patcher)
+        patch_request(request, &self.patcher);
     }
 
     pub fn build_sniffer(&self) -> SignatureSniffer {

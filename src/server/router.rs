@@ -65,50 +65,51 @@ pub struct PolluxState {
 }
 
 impl PolluxState {
+    fn build_client(
+        user_agent: Option<&str>,
+        proxy: Option<url::Url>,
+        enable_multiplexing: bool,
+    ) -> reqwest::Client {
+        let mut headers = HeaderMap::new();
+
+        let mut builder = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(10 * 60));
+
+        if let Some(ua) = user_agent {
+            builder = builder.user_agent(ua);
+        }
+
+        if let Some(proxy_url) = proxy {
+            let proxy = reqwest::Proxy::all(proxy_url.as_str())
+                .expect("invalid proxy url for reqwest client");
+            builder = builder.proxy(proxy);
+        }
+
+        if enable_multiplexing {
+            builder = builder.http2_adaptive_window(true);
+        } else {
+            headers.insert(CONNECTION, HeaderValue::from_static("close"));
+
+            builder = builder
+                .http1_only()
+                .pool_max_idle_per_host(0)
+                .pool_idle_timeout(Duration::from_secs(0));
+        }
+
+        builder
+            .default_headers(headers)
+            .build()
+            .expect("failed to build reqwest client")
+    }
+
     #[must_use]
     pub fn new(providers: Providers, pollux_key: Arc<str>, insecure_cookie: bool) -> Self {
         let geminicli_cfg = providers.geminicli_cfg.clone();
         let codex_cfg = providers.codex_cfg.clone();
         let antigravity_cfg = providers.antigravity_cfg.clone();
 
-        fn build_client(
-            user_agent: Option<&str>,
-            proxy: Option<url::Url>,
-            enable_multiplexing: bool,
-        ) -> reqwest::Client {
-            let mut headers = HeaderMap::new();
-
-            let mut builder = reqwest::Client::builder()
-                .redirect(reqwest::redirect::Policy::none())
-                .connect_timeout(Duration::from_secs(10))
-                .timeout(Duration::from_secs(10 * 60));
-
-            if let Some(ua) = user_agent {
-                builder = builder.user_agent(ua);
-            }
-
-            if let Some(proxy_url) = proxy {
-                let proxy = reqwest::Proxy::all(proxy_url.as_str())
-                    .expect("invalid proxy url for reqwest client");
-                builder = builder.proxy(proxy);
-            }
-
-            if enable_multiplexing {
-                builder = builder.http2_adaptive_window(true);
-            } else {
-                headers.insert(CONNECTION, HeaderValue::from_static("close"));
-
-                builder = builder
-                    .http1_only()
-                    .pool_max_idle_per_host(0)
-                    .pool_idle_timeout(Duration::from_secs(0));
-            }
-
-            builder
-                .default_headers(headers)
-                .build()
-                .expect("failed to build reqwest client")
-        }
         let geminicli_default_url: url::Url =
             "https://cloudcode-pa.googleapis.com".parse().unwrap();
         let codex_default_url: url::Url = "https://chatgpt.com".parse().unwrap();
@@ -116,7 +117,7 @@ impl PolluxState {
         let geminicli_has_custom_url = geminicli_cfg.custom_api_url != geminicli_default_url;
         let codex_has_custom_url = codex_cfg.custom_api_url != codex_default_url;
 
-        let geminicli_client = build_client(
+        let geminicli_client = Self::build_client(
             Some(GOOGLE_AUTH_LIB_USER_AGENT),
             geminicli_cfg.proxy.clone(),
             geminicli_cfg.enable_multiplexing,
@@ -124,8 +125,8 @@ impl PolluxState {
         // Codex OAuth client: no User-Agent, matching upstream codex-rs which
         // uses a bare reqwest::Client::builder() for token exchange.
         let codex_client =
-            build_client(None, codex_cfg.proxy.clone(), codex_cfg.enable_multiplexing);
-        let antigravity_client = build_client(
+            Self::build_client(None, codex_cfg.proxy.clone(), codex_cfg.enable_multiplexing);
+        let antigravity_client = Self::build_client(
             Some(ANTIGRAVITY_USER_AGENT),
             antigravity_cfg.proxy.clone(),
             antigravity_cfg.enable_multiplexing,
@@ -134,7 +135,7 @@ impl PolluxState {
         // When a custom_api_url is set it acts as a reverse proxy, so the
         // caller should bypass the configured proxy and connect directly.
         let geminicli_caller_client = if geminicli_has_custom_url {
-            build_client(
+            Self::build_client(
                 Some(GEMINICLI_USER_AGENT),
                 None,
                 geminicli_cfg.enable_multiplexing,
@@ -144,9 +145,9 @@ impl PolluxState {
         };
         // API caller always uses the full Codex UA regardless of custom URL.
         let codex_caller_client = if codex_has_custom_url {
-            build_client(Some(CODEX_USER_AGENT), None, codex_cfg.enable_multiplexing)
+            Self::build_client(Some(CODEX_USER_AGENT), None, codex_cfg.enable_multiplexing)
         } else {
-            build_client(
+            Self::build_client(
                 Some(CODEX_USER_AGENT),
                 codex_cfg.proxy.clone(),
                 codex_cfg.enable_multiplexing,
@@ -201,8 +202,7 @@ async fn access_log(req: Request, next: Next) -> Response {
         .get(X_REQUEST_ID)
         .and_then(|v| v.to_str().ok())
         .filter(|v| !v.is_empty() && v.len() <= MAX_REQUEST_ID_LEN)
-        .map(str::to_string)
-        .unwrap_or_else(generate_request_id);
+        .map_or_else(generate_request_id, str::to_string);
 
     let user_agent = req
         .headers()

@@ -324,7 +324,7 @@ impl Actor for GeminiCliOauthWorkerActor {
         });
 
         info!(
-            proxy = %cfg.proxy.as_ref().map(|u| u.as_str()).unwrap_or("<none>"),
+            proxy = %cfg.proxy.as_ref().map_or("<none>", url::Url::as_str),
             enable_multiplexing = cfg.enable_multiplexing,
             oauth_tps = cfg.oauth_tps,
             "GeminiCliOauthWorker runtime config loaded"

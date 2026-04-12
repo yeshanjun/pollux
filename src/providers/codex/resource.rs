@@ -84,7 +84,7 @@ impl CodexResource {
     /// Merge updates from any JSON-serializable payload into this resource.
     ///
     /// This accepts both:
-    /// - full credential JSON (account_id, refresh_token, expiry, etc.)
+    /// - full credential JSON (`account_id`, `refresh_token`, `expiry`, etc.)
     /// - OAuth token refresh payloads (access_token, expires_in)
     ///
     /// Only updates fields present in the JSON; others remain unchanged.
@@ -153,27 +153,29 @@ impl CodexResource {
         token_response: OauthTokenResponse,
         refresh_seed: Option<CodexRefreshTokenSeed>,
     ) -> Result<Self, PolluxError> {
-        let access_token = token_response.access_token().secret().trim().to_string();
-        if access_token.is_empty() {
-            return Err(PolluxError::UnexpectedError(
-                "Missing access_token in OAuth token response".to_string(),
-            ));
-        }
+        // Validate presence of `access_token` and `refresh_token`, trimming whitespace and rejecting empty strings.
+        let access_token = Some(token_response.access_token().secret().trim())
+            .filter(|&s| !s.is_empty())
+            .map(ToString::to_string)
+            .ok_or_else(|| {
+                PolluxError::UnexpectedError("Missing access_token in OAuth token response".into())
+            })?;
 
-        let expires_in = token_response
-            .expires_in()
-            .unwrap_or_else(|| std::time::Duration::from_secs(60 * 60));
-        let expiry = Utc::now() + Duration::seconds(expires_in.as_secs() as i64);
+        // Use `expires_in` to calculate expiry if available, otherwise default to 1 hour.
+        let expiry = Utc::now()
+            + token_response
+                .expires_in()
+                .unwrap_or(std::time::Duration::from_secs(3600));
 
+        // Prefer refresh_token from the token response, but fall back to the seed if not present.
         let refresh_token = token_response
             .refresh_token()
-            .map(|t| t.secret().trim().to_string())
-            .filter(|s| !s.is_empty())
-            .or_else(|| refresh_seed.as_ref().map(|s| s.refresh_token().to_string()))
+            .map(|t| t.secret().trim())
+            .filter(|&s| !s.is_empty())
+            .or_else(|| refresh_seed.as_ref().map(|s| s.refresh_token()))
+            .map(ToString::to_string)
             .ok_or_else(|| {
-                PolluxError::UnexpectedError(
-                    "Missing refresh_token in OAuth token response".to_string(),
-                )
+                PolluxError::UnexpectedError("Missing refresh_token in OAuth token response".into())
             })?;
 
         let id_token = token_response

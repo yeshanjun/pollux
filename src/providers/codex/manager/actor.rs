@@ -269,7 +269,7 @@ impl Actor for CodexActor {
             }
 
             CodexActorMessage::ProcessComplete { result } => {
-                self.handle_process_complete(myself.clone(), state, result);
+                self.handle_process_complete(&myself, state, result);
             }
 
             CodexActorMessage::ActivateCredential { id, credential } => {
@@ -523,7 +523,7 @@ impl CodexActor {
 
     fn handle_process_complete(
         &self,
-        myself: ActorRef<CodexActorMessage>,
+        myself: &ActorRef<CodexActorMessage>,
         state: &mut CodexActorState,
         result: CredentialProcessResult,
     ) {

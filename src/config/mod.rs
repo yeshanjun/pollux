@@ -52,18 +52,17 @@ impl Config {
 
     /// Loads configuration from the TOML file (with defaults) and validates required fields.
     pub fn from_toml() -> Self {
-        if !PathBuf::from(DEFAULT_CONFIG_FILE).is_file() {
-            panic!("config file not found: {}", DEFAULT_CONFIG_FILE);
-        }
+        assert!(
+            PathBuf::from(DEFAULT_CONFIG_FILE).is_file(),
+            "config file not found: {DEFAULT_CONFIG_FILE}"
+        );
         let cfg: Self = Self::figment().extract().unwrap_or_else(|err| {
-            panic!(
-                "failed to extract configuration from {}: {err}",
-                DEFAULT_CONFIG_FILE
-            )
+            panic!("failed to extract configuration from {DEFAULT_CONFIG_FILE}: {err}")
         });
-        if cfg.basic.pollux_key.trim().is_empty() {
-            panic!("basic.pollux_key must be set and non-empty");
-        }
+        assert!(
+            !cfg.basic.pollux_key.trim().is_empty(),
+            "basic.pollux_key must be set and non-empty"
+        );
         cfg
     }
 

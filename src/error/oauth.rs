@@ -59,7 +59,7 @@ impl From<PkgsRequestTokenError> for OauthError {
             RequestTokenError::Request(wrapper) => match wrapper {
                 oauth2::HttpClientError::Reqwest(real_err) => OauthError::Request(*real_err),
                 other => OauthError::Other {
-                    message: format!("HttpClientError: {:?}", other),
+                    message: format!("HttpClientError: {other:?}"),
                 },
             },
             RequestTokenError::Parse(parse_err, body) => {
@@ -73,11 +73,12 @@ impl From<PkgsRequestTokenError> for OauthError {
                     };
                 }
 
-                let body = body_str
-                    .char_indices()
-                    .nth(100)
-                    .map(|(idx, _)| format!("{}...<truncated>", &body_str[..idx]))
-                    .unwrap_or_else(|| body_str.into_owned());
+                let body = if let Some((idx, _)) = body_str.char_indices().nth(100) {
+                    format!("{}...<truncated>", &body_str[..idx])
+                } else {
+                    body_str.into_owned()
+                };
+
                 OauthError::Parse {
                     message: parse_err.to_string(),
                     body,

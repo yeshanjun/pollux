@@ -109,15 +109,15 @@ impl Actor for CodexOauthWorkerActor {
             builder = builder.proxy(proxy);
         }
 
-        if !cfg.enable_multiplexing {
+        if cfg.enable_multiplexing {
+            builder = builder.http2_adaptive_window(true);
+        } else {
             headers.insert(CONNECTION, HeaderValue::from_static("close"));
 
             builder = builder
                 .http1_only()
                 .pool_max_idle_per_host(0)
                 .pool_idle_timeout(Duration::from_secs(0));
-        } else {
-            builder = builder.http2_adaptive_window(true);
         }
 
         let client = builder
@@ -162,7 +162,7 @@ impl Actor for CodexOauthWorkerActor {
         });
 
         info!(
-            proxy = %cfg.proxy.as_ref().map(|u| u.as_str()).unwrap_or("<none>"),
+            proxy = %cfg.proxy.as_ref().map_or("<none>", |u| u.as_str()),
             enable_multiplexing = cfg.enable_multiplexing,
             oauth_tps = cfg.oauth_tps,
             "CodexCredentialProcessor runtime config loaded"
@@ -329,14 +329,11 @@ async fn refresh_credential(
     };
     let token_response = request_token_refresh(client, retry_policy, refresh_token).await?;
 
-    match refresh_seed {
-        Some(seed) => {
-            *creds = CodexResource::try_from_oauth_token_response(token_response, Some(seed))?;
-        }
-        None => {
-            creds.update_credential(&token_response)?;
-            debug!(account_id = %creds.account_id(), "Access token refreshed successfully");
-        }
+    if let Some(seed) = refresh_seed {
+        *creds = CodexResource::try_from_oauth_token_response(token_response, Some(seed))?;
+    } else {
+        creds.update_credential(&token_response)?;
+        debug!(account_id = %creds.account_id(), "Access token refreshed successfully");
     }
     Ok(())
 }

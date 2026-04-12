@@ -200,7 +200,7 @@ impl Actor for GeminiCliActor {
         let rows = ops
             .load_active()
             .await
-            .map_err(|e| ActorProcessingErr::from(format!("DB load active creds failed: {}", e)))?;
+            .map_err(|e| ActorProcessingErr::from(format!("DB load active creds failed: {e}")))?;
 
         for (id, cred) in rows {
             manager.add_credential(id, cred, provider_supported_mask);
@@ -214,7 +214,7 @@ impl Actor for GeminiCliActor {
 
         info!(
             custom_api_url = %cfg.custom_api_url,
-            proxy = %cfg.proxy.as_ref().map(|u| u.as_str()).unwrap_or("<none>"),
+            proxy = %cfg.proxy.as_ref().map_or("<none>", |u| u.as_str()),
             enable_multiplexing = cfg.enable_multiplexing,
             oauth_tps = cfg.oauth_tps,
             "GeminiCliActor runtime config loaded"
@@ -236,7 +236,7 @@ impl Actor for GeminiCliActor {
     ) -> Result<(), ActorProcessingErr> {
         match message {
             GeminiCliActorMessage::GetCredential(model_mask, rp) => {
-                self.handle_get_credential(myself.clone(), state, rp, model_mask);
+                Self::handle_get_credential(&myself, state, rp, model_mask);
             }
 
             GeminiCliActorMessage::ReportRateLimit {
@@ -244,17 +244,17 @@ impl Actor for GeminiCliActor {
                 cooldown,
                 model_mask,
             } => {
-                self.handle_report_rate_limit(state, id, cooldown, model_mask);
+                Self::handle_report_rate_limit(state, id, cooldown, model_mask);
             }
             GeminiCliActorMessage::ReportModelUnsupported { id, model_mask } => {
-                self.handle_report_model_unsupported(state, id, model_mask);
+                Self::handle_report_model_unsupported(state, id, model_mask);
             }
 
             GeminiCliActorMessage::ReportInvalid { id } => {
-                self.handle_report_invalid(myself.clone(), state, vec![id]);
+                Self::handle_report_invalid(&myself, state, vec![id]);
             }
             GeminiCliActorMessage::ReportBaned { id } => {
-                self.handle_report_baned(state, id);
+                Self::handle_report_baned(state, id);
             }
             GeminiCliActorMessage::SubmitCredentials(creds_vec) => {
                 Self::handle_submit_credentials(state, creds_vec);
@@ -282,7 +282,6 @@ impl Actor for GeminiCliActor {
 
 impl GeminiCliActor {
     fn handle_report_model_unsupported(
-        &self,
         state: &mut GeminiCliActorState,
         id: CredentialId,
         model_mask: u64,
@@ -294,8 +293,7 @@ impl GeminiCliActor {
         let project_id = state
             .manager
             .get_credential(id)
-            .map(|r| r.project_id().to_string())
-            .unwrap_or_else(|| "-".to_string());
+            .map_or_else(|| "-".to_string(), |r| r.project_id().to_string());
 
         // Scheduler is pure logic; log the state transition at the actor boundary.
         let Some((before_bits, after_bits)) = state.manager.mark_model_unsupported(id, model_mask)
@@ -321,19 +319,18 @@ impl GeminiCliActor {
     }
 
     fn handle_get_credential(
-        &self,
-        myself: ActorRef<GeminiCliActorMessage>,
+        myself: &ActorRef<GeminiCliActorMessage>,
         state: &mut GeminiCliActorState,
         reply_port: RpcReplyPort<Option<GeminiCliLease>>,
         model_mask: u64,
     ) {
         let start = std::time::Instant::now();
         let assignment = state.manager.get_assigned(model_mask, None);
-        let sched_us = start.elapsed().as_micros() as u64;
+        let sched_us = start.elapsed().as_micros();
         let sched_stats = &assignment.stats;
 
         if !assignment.refresh_ids.is_empty() {
-            self.handle_report_invalid(myself, state, assignment.refresh_ids);
+            Self::handle_report_invalid(myself, state, assignment.refresh_ids);
         }
 
         if let Some(assigned) = assignment.assigned {
@@ -368,7 +365,6 @@ impl GeminiCliActor {
     }
 
     fn handle_report_rate_limit(
-        &self,
         state: &mut GeminiCliActorState,
         id: CredentialId,
         cooldown: Duration,
@@ -388,8 +384,7 @@ impl GeminiCliActor {
 
     // handle_report_invalid, handle_report_baned, handle_submit_credentials
     fn handle_report_invalid(
-        &self,
-        myself: ActorRef<GeminiCliActorMessage>,
+        myself: &ActorRef<GeminiCliActorMessage>,
         state: &mut GeminiCliActorState,
         ids: Vec<CredentialId>,
     ) {
@@ -438,12 +433,11 @@ impl GeminiCliActor {
         }
     }
 
-    fn handle_report_baned(&self, state: &mut GeminiCliActorState, id: CredentialId) {
+    fn handle_report_baned(state: &mut GeminiCliActorState, id: CredentialId) {
         let project = state
             .manager
             .get_credential(id)
-            .map(|r| r.project_id().to_string())
-            .unwrap_or_else(|| "-".to_string());
+            .map_or_else(|| "-".to_string(), |r| r.project_id().to_string());
         let removed_cred = state.manager.contains(id);
 
         state.manager.delete_credential(id);
@@ -620,8 +614,8 @@ impl GeminiCliActor {
                 let pid = job.cred.project_id().to_string();
                 warn!("RefreshTask failed for project {}: {}", pid, err);
                 match job.kind {
-                    CredentialJobKind::Refresh(id) => match err {
-                        PolluxError::Oauth(OauthError::ServerResponse { .. }) => {
+                    CredentialJobKind::Refresh(id) => {
+                        if let PolluxError::Oauth(OauthError::ServerResponse { .. }) = err {
                             error!("ID: {id} Refresh failed: {}. Removing.", err);
 
                             state.manager.delete_credential(id);
@@ -631,15 +625,14 @@ impl GeminiCliActor {
                                     warn!("ID: {id} DB set_status failed: {}", e);
                                 }
                             });
-                        }
-                        _ => {
+                        } else {
                             warn!(
                                 "ID: {id} Refresh failed due to transient error: {}. Keeping credential.",
                                 err
                             );
                             state.manager.complete_refresh(id, job.cred);
                         }
-                    },
+                    }
                     CredentialJobKind::Ingest => {
                         warn!(
                             "Project: {} Onboard failed: {}. Discarding.",

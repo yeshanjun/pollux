@@ -74,7 +74,7 @@ impl GeminiClient {
                     .await?
                     .ok_or(GeminiCliError::NoAvailableCredential)?;
 
-                let waited_us = start.elapsed().as_micros() as u64;
+                let waited_us = start.elapsed().as_micros();
                 info!(
                     waited_us,
                     id = assigned.id,

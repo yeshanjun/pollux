@@ -54,8 +54,7 @@ impl ModelRegistry {
         // Index is expected to be valid internally; fallback avoids panic.
         self.index_to_name
             .get(index)
-            .map(|s| s.as_str())
-            .unwrap_or("UNKNOWN_MODEL")
+            .map_or("UNKNOWN_MODEL", String::as_str)
     }
 
     /// Returns the total number of models in the registry.

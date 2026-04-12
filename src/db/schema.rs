@@ -1,11 +1,11 @@
 //! SQL DDL for initializing the database schema.
 //! SQLite-first design; can be adapted for other RDBMS.
 
-/// SQLite schema includes:
-/// - `gemini_cli` table (Gemini CLI provider, one (sub, project_id) per row)
-/// - `codex` table (Codex provider, one (sub, account_id) per row)
-/// - `antigravity` table (Antigravity provider, one (sub, project_id) per row)
-pub const SQLITE_INIT: &str = r#"
+/// `SQLite` schema includes:
+/// - `gemini_cli` table (Gemini CLI provider, one (sub, `project_id`) per row)
+/// - `codex` table (Codex provider, one (sub, `account_id`) per row)
+/// - `antigravity` table (Antigravity provider, one (sub, `project_id`) per row)
+pub const SQLITE_INIT: &str = r"
 -- ---------------------------------------------------------------------------
 -- Gemini CLI provider
 -- ---------------------------------------------------------------------------
@@ -63,4 +63,4 @@ CREATE TABLE IF NOT EXISTS antigravity (
 );
 
 CREATE INDEX IF NOT EXISTS idx_antigravity_status ON antigravity(status);
-"#;
+";

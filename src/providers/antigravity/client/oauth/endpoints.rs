@@ -41,8 +41,8 @@ impl AntigravityOauthEndpoints {
             .add_extra_param("access_type", "offline")
             .add_extra_param("prompt", "consent");
 
-        for scope in cfg.oauth_scopes.iter() {
-            req = req.add_scope(Scope::new(scope.to_string()));
+        for scope in &cfg.oauth_scopes {
+            req = req.add_scope(Scope::new(scope.clone()));
         }
 
         Ok(req.url())

@@ -146,14 +146,14 @@ pub(crate) fn spawn_pipeline(
         builder = builder.proxy(proxy);
     }
 
-    if !cfg.enable_multiplexing {
+    if cfg.enable_multiplexing {
+        builder = builder.http2_adaptive_window(true);
+    } else {
         headers.insert(CONNECTION, HeaderValue::from_static("close"));
         builder = builder
             .http1_only()
             .pool_max_idle_per_host(0)
             .pool_idle_timeout(Duration::from_secs(0));
-    } else {
-        builder = builder.http2_adaptive_window(true);
     }
 
     let http = builder

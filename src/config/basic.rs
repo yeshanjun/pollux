@@ -15,7 +15,7 @@ pub struct BasicConfig {
     #[serde(default = "default_listen_port")]
     pub listen_port: u16,
 
-    /// Database URL for SQLite.
+    /// Database URL for `SQLite`.
     /// TOML: `basic.database_url`. Default: `sqlite://data.db`.
     #[serde(default)]
     pub database_url: String,
@@ -47,7 +47,7 @@ impl Default for BasicConfig {
             database_url: "sqlite://data.db".to_string(),
             loglevel: "info".to_string(),
             // No insecure default. `Config::from_toml()` enforces non-empty.
-            pollux_key: "".to_string(),
+            pollux_key: String::new(),
             insecure_cookie: false,
         }
     }
@@ -70,7 +70,7 @@ where
 
 /// Default IP address for the HTTP server listen address.
 fn default_listen_ip() -> IpAddr {
-    Ipv4Addr::new(0, 0, 0, 0).into()
+    Ipv4Addr::UNSPECIFIED.into()
 }
 
 /// Default port for the HTTP server.

@@ -47,7 +47,7 @@ impl CredentialOps {
 
     pub async fn set_status(&self, id: CredentialId, status: bool) -> Result<(), PolluxError> {
         let _ = i64::try_from(id)
-            .map_err(|_| PolluxError::UnexpectedError(format!("Invalid credential id {}", id)))?;
+            .map_err(|_| PolluxError::UnexpectedError(format!("Invalid credential id {id}")))?;
         let patch = CodexPatch {
             status: Some(status),
             ..Default::default()

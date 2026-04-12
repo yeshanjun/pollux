@@ -204,7 +204,7 @@ impl Actor for AntigravityActor {
     ) -> Result<(), ActorProcessingErr> {
         match message {
             AntigravityActorMessage::GetCredential(model_mask, rp) => {
-                self.handle_get_credential(myself.clone(), state, rp, model_mask);
+                Self::handle_get_credential(myself.clone(), state, rp, model_mask);
             }
 
             AntigravityActorMessage::ReportRateLimit {
@@ -212,29 +212,29 @@ impl Actor for AntigravityActor {
                 cooldown,
                 model_mask,
             } => {
-                self.handle_report_rate_limit(state, id, cooldown, model_mask);
+                Self::handle_report_rate_limit(state, id, cooldown, model_mask);
             }
             AntigravityActorMessage::ReportModelUnsupported { id, model_mask } => {
-                self.handle_report_model_unsupported(state, id, model_mask);
+                Self::handle_report_model_unsupported(state, id, model_mask);
             }
 
             AntigravityActorMessage::ReportInvalid { id } => {
-                self.handle_report_invalid(myself.clone(), state, vec![id]);
+                Self::handle_report_invalid(myself.clone(), state, vec![id]);
             }
 
             AntigravityActorMessage::ReportBaned { id } => {
-                self.handle_report_baned(state, id);
+                Self::handle_report_baned(state, id);
             }
 
             AntigravityActorMessage::SubmitTrustedOauth(token_response) => {
-                self.handle_submit_trusted_oauth(state, token_response);
+                Self::handle_submit_trusted_oauth(state, token_response);
             }
             AntigravityActorMessage::SubmitUntrustedSeeds(seeds) => {
-                self.handle_submit_untrusted_seeds(state, seeds);
+                Self::handle_submit_untrusted_seeds(state, seeds);
             }
 
             AntigravityActorMessage::RefreshComplete { outcome } => {
-                self.handle_refresh_complete(myself.clone(), state, outcome);
+                Self::handle_refresh_complete(&myself, state, outcome);
             }
             AntigravityActorMessage::ActivateCredential { id, credential } => {
                 let project = credential.project_id().to_string();
@@ -250,7 +250,6 @@ impl Actor for AntigravityActor {
 
 impl AntigravityActor {
     fn handle_report_model_unsupported(
-        &self,
         state: &mut AntigravityActorState,
         id: CredentialId,
         model_mask: u64,
@@ -262,8 +261,7 @@ impl AntigravityActor {
         let project_id = state
             .manager
             .get_credential(id)
-            .map(|r| r.project_id().to_string())
-            .unwrap_or_else(|| "-".to_string());
+            .map_or_else(|| "-".to_string(), |r| r.project_id().to_string());
 
         let Some((before_bits, after_bits)) = state.manager.mark_model_unsupported(id, model_mask)
         else {
@@ -288,7 +286,6 @@ impl AntigravityActor {
     }
 
     fn handle_get_credential(
-        &self,
         myself: ActorRef<AntigravityActorMessage>,
         state: &mut AntigravityActorState,
         reply_port: RpcReplyPort<Option<AntigravityLease>>,
@@ -296,11 +293,11 @@ impl AntigravityActor {
     ) {
         let start = std::time::Instant::now();
         let assignment = state.manager.get_assigned(model_mask, None);
-        let sched_us = start.elapsed().as_micros() as u64;
+        let sched_us = start.elapsed().as_micros();
         let stats = &assignment.stats;
 
         if !assignment.refresh_ids.is_empty() {
-            self.handle_report_invalid(myself, state, assignment.refresh_ids);
+            Self::handle_report_invalid(myself, state, assignment.refresh_ids);
         }
 
         if let Some(assigned) = assignment.assigned {
@@ -334,7 +331,6 @@ impl AntigravityActor {
     }
 
     fn handle_report_rate_limit(
-        &self,
         state: &mut AntigravityActorState,
         id: CredentialId,
         cooldown: Duration,
@@ -353,7 +349,6 @@ impl AntigravityActor {
     }
 
     fn handle_report_invalid(
-        &self,
         myself: ActorRef<AntigravityActorMessage>,
         state: &mut AntigravityActorState,
         ids: Vec<CredentialId>,
@@ -392,12 +387,11 @@ impl AntigravityActor {
         });
     }
 
-    fn handle_report_baned(&self, state: &mut AntigravityActorState, id: CredentialId) {
+    fn handle_report_baned(state: &mut AntigravityActorState, id: CredentialId) {
         let project = state
             .manager
             .get_credential(id)
-            .map(|r| r.project_id().to_string())
-            .unwrap_or_else(|| "-".to_string());
+            .map_or_else(|| "-".to_string(), |r| r.project_id().to_string());
         let removed = state.manager.contains(id);
         state.manager.delete_credential(id);
 
@@ -412,7 +406,6 @@ impl AntigravityActor {
     }
 
     fn handle_submit_trusted_oauth(
-        &self,
         state: &mut AntigravityActorState,
         token_response: OauthTokenResponse,
     ) {
@@ -436,7 +429,6 @@ impl AntigravityActor {
     }
 
     fn handle_submit_untrusted_seeds(
-        &self,
         state: &mut AntigravityActorState,
         seeds: Vec<AntigravityRefreshTokenSeed>,
     ) {
@@ -457,8 +449,7 @@ impl AntigravityActor {
     }
 
     fn handle_refresh_complete(
-        &self,
-        myself: ActorRef<AntigravityActorMessage>,
+        myself: &ActorRef<AntigravityActorMessage>,
         state: &mut AntigravityActorState,
         outcome: RefreshOutcome,
     ) {
@@ -500,31 +491,26 @@ impl AntigravityActor {
                         return;
                     }
 
-                    match err {
-                        PolluxError::Oauth(OauthError::ServerResponse { .. }) => {
-                            error!(id, "refresh failed permanently: {}. Disabling.", err);
-                            state.manager.delete_credential(id);
+                    if let PolluxError::Oauth(OauthError::ServerResponse { .. }) = err {
+                        error!(id, "refresh failed permanently: {}. Disabling.", err);
+                        state.manager.delete_credential(id);
 
-                            let ops = state.ops.clone();
-                            tokio::spawn(async move {
-                                if let Err(e) = ops.set_status(id, false).await {
-                                    warn!(id, "DB set_status failed: {}", e);
-                                }
-                            });
-                        }
-
-                        _ => {
-                            warn!(
-                                id,
-                                "refresh failed due to transient error: {}. Keeping credential.",
-                                err
-                            );
-
-                            if let Some(cred) = state.manager.get_credential_clone(id) {
-                                state.manager.complete_refresh(id, cred);
-                            } else {
-                                state.manager.delete_credential(id);
+                        let ops = state.ops.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) = ops.set_status(id, false).await {
+                                warn!(id, "DB set_status failed: {}", e);
                             }
+                        });
+                    } else {
+                        warn!(
+                            id,
+                            "refresh failed due to transient error: {}. Keeping credential.", err
+                        );
+
+                        if let Some(cred) = state.manager.get_credential_clone(id) {
+                            state.manager.complete_refresh(id, cred);
+                        } else {
+                            state.manager.delete_credential(id);
                         }
                     }
                 }
@@ -532,7 +518,7 @@ impl AntigravityActor {
 
             RefreshOutcome::OnboardSeed { seed, result } => match result {
                 Ok(create) => {
-                    let pid = create.project_id.to_string();
+                    let pid = create.project_id.clone();
                     info!(project_id = %pid, "Seed onboard success. Inserting to DB.");
 
                     let ops = state.ops.clone();

@@ -88,7 +88,7 @@ impl CodexClient {
                 .await?
                 .ok_or(CodexError::NoAvailableCredential)?;
 
-            let waited_us = start.elapsed().as_micros() as u64;
+            let waited_us = start.elapsed().as_micros();
             info!(
                 waited_us,
                 id = lease.id,
@@ -238,7 +238,7 @@ impl CodexClient {
                 .await?
                 .ok_or(CodexError::NoAvailableCredential)?;
 
-            let waited_us = start.elapsed().as_micros() as u64;
+            let waited_us = start.elapsed().as_micros();
             info!(
                 waited_us,
                 id = lease.id,

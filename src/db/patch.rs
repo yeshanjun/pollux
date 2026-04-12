@@ -30,7 +30,7 @@ pub struct CodexCreate {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AntigravityCreate {
     pub email: Option<String>,
-    /// May be missing depending on upstream/OAuth flow; DbActor will synthesize a stable value.
+    /// May be missing depending on upstream/OAuth flow; `DbActor` will synthesize a stable value.
     pub sub: Option<String>,
     pub project_id: String,
     pub refresh_token: String,

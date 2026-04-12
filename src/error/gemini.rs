@@ -389,8 +389,7 @@ impl GeminiCliErrorBody {
                 .ok()
                 .map(|dt| (dt.with_timezone(&Utc) - Utc::now()).num_seconds())
                 .filter(|&diff| diff > 0)
-                .map(|diff| diff as u64 + 1)
-                .unwrap_or(90);
+                .map_or(90, |diff| diff as u64 + 1);
             Some(RateLimitVariant::QuotaCooldown(secs))
         }) {
             return variant;
@@ -404,8 +403,9 @@ impl GeminiCliErrorBody {
                     Some("MODEL_CAPACITY_EXHAUSTED" | "RATE_LIMIT_EXCEEDED")
                 )
             })
-            .map(|_| RateLimitVariant::CapacityPressure)
-            .unwrap_or(RateLimitVariant::RiskControl)
+            .map_or(RateLimitVariant::RiskControl, |_| {
+                RateLimitVariant::CapacityPressure
+            })
     }
 }
 

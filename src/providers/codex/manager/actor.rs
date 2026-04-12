@@ -207,7 +207,7 @@ impl Actor for CodexActor {
 
         info!(
             custom_api_url = %cfg.custom_api_url,
-            proxy = %cfg.proxy.as_ref().map(|u| u.as_str()).unwrap_or("<none>"),
+            proxy = %cfg.proxy.as_ref().map_or("<none>", |u| u.as_str()),
             enable_multiplexing = cfg.enable_multiplexing,
             retry_max_times = cfg.retry_max_times,
             oauth_tps = cfg.oauth_tps,
@@ -237,7 +237,7 @@ impl Actor for CodexActor {
                 route_key,
                 reply,
             } => {
-                self.handle_get_credential(myself.clone(), state, reply, model_mask, route_key);
+                Self::handle_get_credential(myself.clone(), state, reply, model_mask, route_key);
             }
 
             CodexActorMessage::ReportRateLimit {
@@ -245,31 +245,31 @@ impl Actor for CodexActor {
                 model_mask,
                 cooldown,
             } => {
-                self.handle_report_rate_limit(state, id, model_mask, cooldown);
+                Self::handle_report_rate_limit(state, id, model_mask, cooldown);
             }
 
             CodexActorMessage::ReportModelUnsupported { id, model_mask } => {
-                self.handle_report_model_unsupported(state, id, model_mask);
+                Self::handle_report_model_unsupported(state, id, model_mask);
             }
 
             CodexActorMessage::ReportInvalid { id } => {
-                self.handle_report_invalid(myself.clone(), state, vec![id]);
+                Self::handle_report_invalid(myself.clone(), state, vec![id]);
             }
 
             CodexActorMessage::ReportBaned { id } => {
-                self.handle_report_baned(state, id);
+                Self::handle_report_baned(state, id);
             }
 
             CodexActorMessage::SubmitTrustedOauth(token_response) => {
-                self.handle_submit_trusted_oauth(state, token_response);
+                Self::handle_submit_trusted_oauth(state, token_response);
             }
 
             CodexActorMessage::SubmitUntrustedSeeds(seeds) => {
-                self.handle_submit_untrusted_seeds(state, seeds);
+                Self::handle_submit_untrusted_seeds(state, seeds);
             }
 
             CodexActorMessage::ProcessComplete { result } => {
-                self.handle_process_complete(&myself, state, result);
+                Self::handle_process_complete(&myself, state, result);
             }
 
             CodexActorMessage::ActivateCredential { id, credential } => {
@@ -286,7 +286,6 @@ impl Actor for CodexActor {
 
 impl CodexActor {
     fn handle_report_model_unsupported(
-        &self,
         state: &mut CodexActorState,
         id: CredentialId,
         model_mask: u64,
@@ -298,8 +297,7 @@ impl CodexActor {
         let account_id = state
             .manager
             .get_credential(id)
-            .map(|r| r.account_id().to_string())
-            .unwrap_or_else(|| "-".to_string());
+            .map_or_else(|| "-".to_string(), |r| r.account_id().to_string());
 
         let disabled_names = crate::model_catalog::format_model_mask(model_mask);
 
@@ -326,7 +324,6 @@ impl CodexActor {
     }
 
     fn handle_get_credential(
-        &self,
         myself: ActorRef<CodexActorMessage>,
         state: &mut CodexActorState,
         reply_port: RpcReplyPort<Option<CodexLease>>,
@@ -336,10 +333,10 @@ impl CodexActor {
         let sticky_id = route_key.and_then(|rk| state.router.get(rk, model_mask));
         let start = std::time::Instant::now();
         let assignment = state.manager.get_assigned(model_mask, sticky_id);
-        let sched_us = start.elapsed().as_micros() as u64;
+        let sched_us = start.elapsed().as_micros();
 
         if !assignment.refresh_ids.is_empty() {
-            self.handle_report_invalid(myself, state, assignment.refresh_ids);
+            Self::handle_report_invalid(myself, state, assignment.refresh_ids);
         }
 
         let stats = state.manager.stats(model_mask);
@@ -384,7 +381,6 @@ impl CodexActor {
     }
 
     fn handle_report_rate_limit(
-        &self,
         state: &mut CodexActorState,
         id: CredentialId,
         model_mask: u64,
@@ -402,7 +398,6 @@ impl CodexActor {
     }
 
     fn handle_report_invalid(
-        &self,
         myself: ActorRef<CodexActorMessage>,
         state: &mut CodexActorState,
         ids: Vec<CredentialId>,
@@ -447,12 +442,11 @@ impl CodexActor {
         });
     }
 
-    fn handle_report_baned(&self, state: &mut CodexActorState, id: CredentialId) {
+    fn handle_report_baned(state: &mut CodexActorState, id: CredentialId) {
         let account_id = state
             .manager
             .get_credential(id)
-            .map(|r| r.account_id().to_string())
-            .unwrap_or_else(|| "-".to_string());
+            .map_or_else(|| "-".to_string(), |r| r.account_id().to_string());
         let removed = state.manager.contains(id);
 
         state.manager.delete_credential(id);
@@ -470,7 +464,6 @@ impl CodexActor {
     }
 
     fn handle_submit_untrusted_seeds(
-        &self,
         state: &mut CodexActorState,
         seeds: Vec<CodexRefreshTokenSeed>,
     ) {
@@ -500,7 +493,6 @@ impl CodexActor {
     }
 
     fn handle_submit_trusted_oauth(
-        &self,
         state: &mut CodexActorState,
         token_response: OauthTokenResponse,
     ) {
@@ -522,7 +514,6 @@ impl CodexActor {
     }
 
     fn handle_process_complete(
-        &self,
         myself: &ActorRef<CodexActorMessage>,
         state: &mut CodexActorState,
         result: CredentialProcessResult,
@@ -598,8 +589,8 @@ impl CodexActor {
                 warn!("CredentialJob failed for account {}: {}", account, err);
 
                 match job.kind {
-                    CredentialJobKind::Refresh(id) => match err {
-                        PolluxError::Oauth(OauthError::ServerResponse { .. }) => {
+                    CredentialJobKind::Refresh(id) => {
+                        if let PolluxError::Oauth(OauthError::ServerResponse { .. }) = err {
                             error!("ID: {id} refresh failed permanently: {}. Removing.", err);
                             state.manager.delete_credential(id);
 
@@ -609,15 +600,14 @@ impl CodexActor {
                                     warn!("ID: {id} DB set_status failed: {}", e);
                                 }
                             });
-                        }
-                        _ => {
+                        } else {
                             warn!(
                                 "ID: {id} refresh failed due to transient error: {}. Keeping credential.",
                                 err
                             );
                             state.manager.complete_refresh(id, job.cred);
                         }
-                    },
+                    }
                     CredentialJobKind::IngestUntrusted => {
                         warn!(
                             "Untrusted Codex credential ingest failed; discarding job. Details: {}",

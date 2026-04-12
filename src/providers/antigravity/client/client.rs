@@ -49,9 +49,7 @@ impl AntigravityClient {
             .with_max_delay(Duration::from_millis(300))
             .with_max_times(cfg.retry_max_times)
             .with_jitter();
-        let endpoints = base_url
-            .map(Self::endpoints_for_base)
-            .unwrap_or_else(Self::default_endpoints);
+        let endpoints = base_url.map_or_else(Self::default_endpoints, Self::endpoints_for_base);
 
         Self {
             client,
@@ -116,7 +114,7 @@ impl AntigravityClient {
                     info!(
                         channel = "antigravity",
                         lease.id = assigned.id,
-                        lease.waited_us = actor_took.as_micros() as u64,
+                        lease.waited_us = actor_took.as_micros(),
                         req.model = %model,
                         req.stream = stream,
                         req.path = %path,

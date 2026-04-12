@@ -1,6 +1,7 @@
 use super::{extract::CodexPreprocess, respond};
 use crate::error::CodexError;
 use crate::server::router::PolluxState;
+use crate::server::routes::codex::extract::CodexCompactPreprocess;
 use axum::{
     Json,
     extract::State,
@@ -39,4 +40,28 @@ pub(super) async fn codex_response_handler(
 
 pub(super) async fn codex_models_handler() -> Result<Json<OpenaiModelList>, CodexError> {
     Ok(Json(super::CODEX_MODEL_LIST.clone()))
+}
+
+pub(super) async fn codex_compact_handler(
+    State(state): State<PolluxState>,
+    CodexCompactPreprocess { body, ctx, headers }: CodexCompactPreprocess,
+) -> Result<Response, CodexError> {
+    debug!(
+        model = %ctx.model,
+        model_mask = format_args!("0x{:016x}", ctx.model_mask),
+        "Incoming Codex compact request"
+    );
+
+    let upstream_resp = state
+        .codex_caller
+        .call_codex_compact(&state.providers.codex, &ctx, &body, &headers)
+        .await?;
+
+    let status = upstream_resp.status();
+    let body = upstream_resp
+        .bytes()
+        .await
+        .map_err(|e| CodexError::StreamProtocolError(e.to_string()))?;
+
+    Ok((status, body).into_response())
 }

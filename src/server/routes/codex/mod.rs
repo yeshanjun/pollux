@@ -37,6 +37,12 @@ pub fn router() -> Router<PolluxState> {
                 crate::server::DEFAULT_API_BODY_LIMIT_BYTES,
             )),
         )
+        .route(
+            "/codex/v1/responses/compact",
+            post(handlers::codex_compact_handler).layer(DefaultBodyLimit::max(
+                crate::server::DEFAULT_API_BODY_LIMIT_BYTES,
+            )),
+        )
         .route("/codex/v1/models", get(handlers::codex_models_handler))
         .route("/codex/resource:add", post(resource::codex_resource_add))
 }

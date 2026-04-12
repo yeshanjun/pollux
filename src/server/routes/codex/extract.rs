@@ -7,6 +7,7 @@ use axum::{
     http::StatusCode,
 };
 use pollux_schema::OpenaiResponsesErrorObject;
+use serde_json::Value;
 use tracing::debug;
 
 use pollux_schema::OpenaiRequestBody;
@@ -109,6 +110,85 @@ where
 
         Ok(Self {
             body,
+            ctx,
+            headers: codex_headers,
+        })
+    }
+}
+
+/// Lightweight extractor for `/codex/v1/responses/compact`.
+///
+/// Unlike `CodexPreprocess`, the body is kept as raw `serde_json::Value` for
+/// transparent passthrough — we only extract `model` for credential routing.
+pub(crate) struct CodexCompactPreprocess {
+    pub body: Value,
+    pub ctx: CodexContext,
+    pub headers: OpenaiRequestHeaders,
+}
+
+impl<S> FromRequest<S> for CodexCompactPreprocess
+where
+    S: Send + Sync,
+{
+    type Rejection = CodexError;
+
+    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
+        let (mut parts, body) = req.into_parts();
+
+        let codex_headers = OpenaiRequestHeaders::from_request_parts(&mut parts, state)
+            .await
+            .unwrap();
+
+        let req = Request::from_parts(parts, body);
+        let Json(value) = Json::<Value>::from_request(req, state).await?;
+
+        let model = value
+            .get("model")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+
+        if model.is_empty() {
+            return Err(CodexError::RequestRejected {
+                status: StatusCode::BAD_REQUEST,
+                body: OpenaiResponsesErrorObject {
+                    code: Some("INVALID_MODEL".to_string()),
+                    message: "missing or empty model".to_string(),
+                    r#type: "INVALID_MODEL".to_string(),
+                    param: None,
+                },
+                debug_message: None,
+            });
+        }
+
+        let Some(model_mask) = model_mask(model) else {
+            return Err(CodexError::RequestRejected {
+                status: StatusCode::BAD_REQUEST,
+                body: OpenaiResponsesErrorObject {
+                    code: Some("UNSUPPORTED_MODEL".to_string()),
+                    message: "unsupported model (exact match required)".to_string(),
+                    r#type: "UNSUPPORTED_MODEL".to_string(),
+                    param: None,
+                },
+                debug_message: None,
+            });
+        };
+
+        let route_key = {
+            use std::hash::Hasher;
+            let mut hasher = ahash::AHasher::default();
+            hasher.write(codex_headers.session_id.as_bytes());
+            hasher.finish()
+        };
+
+        let ctx = CodexContext {
+            model: model.to_string(),
+            stream: false,
+            model_mask,
+            route_key: Some(route_key),
+        };
+
+        Ok(Self {
+            body: value,
             ctx,
             headers: codex_headers,
         })

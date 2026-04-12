@@ -28,45 +28,6 @@ Recommended usage (to avoid confusion):
 
 OAuth entry/callback endpoints do **not** require the key.
 
-## Onboarding Credentials
-
-### Gemini CLI (Google)
-
-**Method A: OAuth (browser)**
-
-1. Open `http://localhost:8188/geminicli/auth`
-2. Complete Google OAuth
-3. You should see `Success` from `/oauth2callback`
-
-**Method B: Refresh token ingestion**
-
-```bash
-curl -X POST "http://localhost:8188/geminicli/resource:add?key=change-me" \
-  -H "Content-Type: application/json" \
-  -d '[{"refresh_token":"1//..."}, {"refresh_token":"2//..."}]'
-```
-
-Pollux returns `202 Accepted` + `Success` once accepted; detailed validation outcomes are logged.
-
-### Codex (OpenAI)
-
-**Method A: OAuth (browser)**
-
-1. Open `http://localhost:8188/codex/auth`
-2. Complete OpenAI OAuth
-3. OpenAI redirects to `http://localhost:1455/auth/callback?...` (Codex CLI default)
-4. If Pollux is not listening on `1455`, change the port in the browser address bar to your Pollux port
-   (e.g. `8188`) and reload.
-
-**Method B: Refresh token ingestion**
-
-```bash
-curl -X POST "http://localhost:8188/codex/resource:add" \
-  -H "Authorization: Bearer change-me" \
-  -H "Content-Type: application/json" \
-  -d '[{"refresh_token":"rt_01..."}, {"refresh_token":"rt_02..."}]'
-```
-
 ## License
 
 See [LICENSE](./LICENSE). This project is licensed under the GNU Affero General Public License v3.0.

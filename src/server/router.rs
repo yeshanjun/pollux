@@ -26,6 +26,7 @@ use rand::RngCore;
 use reqwest::header::{CONNECTION, HeaderMap, HeaderValue};
 use std::time::Instant;
 use std::{sync::Arc, sync::LazyLock, time::Duration};
+use tower_http::decompression::RequestDecompressionLayer;
 use tracing::{error, info, warn};
 
 /// Global cookie signing/encryption key for `PrivateCookieJar`.
@@ -270,9 +271,11 @@ pub fn pollux_router(state: PolluxState) -> Router {
             state.clone(),
         ));
 
-    let codex = codex::router().layer(middleware::from_extractor_with_state::<RequireKeyAuth, _>(
-        state.clone(),
-    ));
+    let codex = codex::router()
+        .layer(RequestDecompressionLayer::new().zstd(true))
+        .layer(middleware::from_extractor_with_state::<RequireKeyAuth, _>(
+            state.clone(),
+        ));
 
     let antigravity = antigravity::router()
         .layer(middleware::from_extractor_with_state::<RequireKeyAuth, _>(

@@ -5,7 +5,7 @@
 //! - `thought` part cache miss: drop that thought part entirely.
 //! - `functionCall` cache miss: keep the part and fill dummy signature.
 //!
-//! This intentionally differs from GeminiCLI behavior for thought parts.
+//! This intentionally differs from `GeminiCLI` behavior for thought parts.
 
 mod adapter_request;
 mod adapter_response;

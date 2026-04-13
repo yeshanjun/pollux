@@ -66,6 +66,7 @@ impl AntigravityClient {
         )
     }
 
+    #[allow(clippy::needless_pass_by_value)]
     fn endpoints_for_base(base: Url) -> ProviderEndpoints {
         ProviderEndpoints::new(
             &base,

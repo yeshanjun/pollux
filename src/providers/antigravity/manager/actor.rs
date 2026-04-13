@@ -112,7 +112,7 @@ impl AntigravityActorHandle {
     pub(crate) fn submit_refresh_tokens(&self, refresh_tokens: Vec<String>) {
         let seeds: Vec<AntigravityRefreshTokenSeed> = refresh_tokens
             .into_iter()
-            .filter_map(AntigravityRefreshTokenSeed::new)
+            .filter_map(|t| AntigravityRefreshTokenSeed::new(&t))
             .collect();
 
         if seeds.is_empty() {
@@ -227,7 +227,7 @@ impl Actor for AntigravityActor {
             }
 
             AntigravityActorMessage::SubmitTrustedOauth(token_response) => {
-                Self::handle_submit_trusted_oauth(state, token_response);
+                Self::handle_submit_trusted_oauth(state, &token_response);
             }
             AntigravityActorMessage::SubmitUntrustedSeeds(seeds) => {
                 Self::handle_submit_untrusted_seeds(state, seeds);
@@ -407,14 +407,14 @@ impl AntigravityActor {
 
     fn handle_submit_trusted_oauth(
         state: &mut AntigravityActorState,
-        token_response: OauthTokenResponse,
+        token_response: &OauthTokenResponse,
     ) {
         let refresh_token = token_response
             .refresh_token()
             .map(|t| t.secret().trim().to_string())
             .unwrap_or_default();
 
-        let Some(seed) = AntigravityRefreshTokenSeed::new(refresh_token) else {
+        let Some(seed) = AntigravityRefreshTokenSeed::new(&refresh_token) else {
             warn!("Trusted OAuth submit ignored: missing refresh_token");
             return;
         };

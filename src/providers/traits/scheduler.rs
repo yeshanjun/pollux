@@ -90,8 +90,8 @@ impl<R> ResourceEntry<R> {
         self.clear_cooldowns(status);
     }
 
-    fn is_cooling(&self, model_index: ModelIndex) -> bool {
-        self.cooldowns[model_index].is_some_and(|d| Instant::now() < d)
+    fn is_cooling(&self, model_index: ModelIndex, now: Instant) -> bool {
+        self.cooldowns[model_index].is_some_and(|d| now < d)
     }
 
     fn set_cooldown(
@@ -337,7 +337,8 @@ impl<R: Schedulable> ResourceScheduler<R> {
         model_mask: u64,
         sticky_id: Option<CredentialId>,
     ) -> AssignmentResult<R::Lease> {
-        self.process_waiting_room();
+        let now = Instant::now();
+        self.process_waiting_room(now);
 
         let mut result = AssignmentResult::default();
 
@@ -349,7 +350,7 @@ impl<R: Schedulable> ResourceScheduler<R> {
 
         // Evaluate sticky hint first if provided.
         if let Some(id) = sticky_id {
-            let status = self.check_lease(id, model_index);
+            let status = self.check_lease(id, model_index, now);
             match status {
                 LeaseStatus::Ready(lease) => {
                     result.assigned = Some(lease);
@@ -367,7 +368,7 @@ impl<R: Schedulable> ResourceScheduler<R> {
             .get_mut(model_index)
             .and_then(ModelQueue::pop_front)
         {
-            let status = self.check_lease(id, model_index);
+            let status = self.check_lease(id, model_index, now);
             match status {
                 LeaseStatus::Ready(lease) => {
                     if let Some(queue) = self.queues.get_mut(model_index) {
@@ -390,7 +391,12 @@ impl<R: Schedulable> ResourceScheduler<R> {
     }
 
     /// Single evaluation path for any credential candidate against a model index.
-    fn check_lease(&self, id: CredentialId, model_index: ModelIndex) -> LeaseStatus<R::Lease> {
+    fn check_lease(
+        &self,
+        id: CredentialId,
+        model_index: ModelIndex,
+        now: Instant,
+    ) -> LeaseStatus<R::Lease> {
         let Some(cred) = self.creds.get(&id) else {
             return LeaseStatus::Missing;
         };
@@ -403,7 +409,7 @@ impl<R: Schedulable> ResourceScheduler<R> {
             return LeaseStatus::Refreshing;
         }
 
-        if cred.is_cooling(model_index) {
+        if cred.is_cooling(model_index, now) {
             return LeaseStatus::Cooling;
         }
 
@@ -415,22 +421,29 @@ impl<R: Schedulable> ResourceScheduler<R> {
     }
 
     pub fn report_rate_limit(&mut self, id: CredentialId, model_mask: u64, cooldown: Duration) {
+        let now = Instant::now();
         match R::COOLDOWN_GRANULARITY {
             CooldownScope::PerModel => {
                 let Some(model_index) = self.index_from_mask(model_mask) else {
                     return;
                 };
-                self.insert_cooldown(id, model_index, cooldown);
+                self.insert_cooldown(id, model_index, cooldown, now);
             }
             CooldownScope::PerCredential => {
                 for index in 0..self.queues.len() {
-                    self.insert_cooldown(id, index, cooldown);
+                    self.insert_cooldown(id, index, cooldown, now);
                 }
             }
         }
     }
 
-    fn insert_cooldown(&mut self, id: CredentialId, model_index: ModelIndex, cooldown: Duration) {
+    fn insert_cooldown(
+        &mut self,
+        id: CredentialId,
+        model_index: ModelIndex,
+        cooldown: Duration,
+        now: Instant,
+    ) {
         let Self {
             creds,
             status,
@@ -440,7 +453,7 @@ impl<R: Schedulable> ResourceScheduler<R> {
         let Some(cred) = creds.get_mut(&id) else {
             return;
         };
-        let deadline = Instant::now() + cooldown;
+        let deadline = now + cooldown;
         cred.set_cooldown(model_index, deadline, status);
         waiting_room.push(CooldownTicket(Reverse(deadline), id, model_index));
     }
@@ -524,7 +537,7 @@ impl<R: Schedulable> ResourceScheduler<R> {
         Some(index)
     }
 
-    fn process_waiting_room(&mut self) {
+    fn process_waiting_room(&mut self, now: Instant) {
         let Self {
             waiting_room,
             creds,
@@ -532,7 +545,6 @@ impl<R: Schedulable> ResourceScheduler<R> {
             status,
             ..
         } = self;
-        let now = Instant::now();
 
         while waiting_room.peek().is_some_and(|t| (t.0).0 <= now) {
             let CooldownTicket(Reverse(ticket_deadline), credential_id, model_index) =

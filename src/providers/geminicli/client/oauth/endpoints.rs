@@ -72,7 +72,7 @@ pub(crate) static OAUTH_CLIENT: LazyLock<GoogleOauth2Client> =
     LazyLock::new(|| build_oauth2_client().expect("valid Google OAuth2 client with redirect"));
 
 impl GoogleOauthEndpoints {
-    /// Return the shared Google OAuth2 client with redirect configured.
+    /// Return the shared Google `OAuth2` client with redirect configured.
     pub(crate) fn client() -> &'static GoogleOauth2Client {
         &OAUTH_CLIENT
     }
@@ -175,7 +175,7 @@ impl GoogleOauthEndpoints {
     }
 }
 
-/// Build the Google OAuth2 client.
+/// Build the Google `OAuth2` client.
 fn build_oauth2_client() -> Result<GoogleOauth2Client, PolluxError> {
     let client = OAuth2Client::new(ClientId::new(GCLI_CLIENT_ID.to_string()))
         .set_client_secret(ClientSecret::new(GCLI_CLIENT_SECRET.to_string()))

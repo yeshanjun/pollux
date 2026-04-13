@@ -10,13 +10,13 @@ use oauth2::{
 use std::sync::LazyLock;
 use tracing::info;
 
-/// Stateless OpenAI OAuth endpoints for the Codex CLI flow.
+/// Stateless `OpenAI` OAuth endpoints for the Codex CLI flow.
 pub(crate) struct CodexOauthEndpoints;
 
 /// Fixed Codex CLI OAuth client id (public client, no secret).
 const CODEX_CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 
-/// Fixed OpenAI OAuth endpoints (not configurable).
+/// Fixed `OpenAI` OAuth endpoints (not configurable).
 ///
 /// This matches the Codex CLI flow and keeps the auth/token server stable.
 const OPENAI_AUTH_URL: &str = "https://auth.openai.com/oauth/authorize";

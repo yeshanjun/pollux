@@ -85,7 +85,7 @@ impl CodexResource {
     ///
     /// This accepts both:
     /// - full credential JSON (`account_id`, `refresh_token`, `expiry`, etc.)
-    /// - OAuth token refresh payloads (access_token, expires_in)
+    /// - OAuth token refresh payloads (`access_token`, `expires_in`)
     ///
     /// Only updates fields present in the JSON; others remain unchanged.
     #[allow(dead_code)]
@@ -150,8 +150,8 @@ impl CodexResource {
     }
 
     pub(super) fn try_from_oauth_token_response(
-        token_response: OauthTokenResponse,
-        refresh_seed: Option<CodexRefreshTokenSeed>,
+        token_response: &OauthTokenResponse,
+        refresh_seed: Option<&CodexRefreshTokenSeed>,
     ) -> Result<Self, PolluxError> {
         // Validate presence of `access_token` and `refresh_token`, trimming whitespace and rejecting empty strings.
         let access_token = Some(token_response.access_token().secret().trim())

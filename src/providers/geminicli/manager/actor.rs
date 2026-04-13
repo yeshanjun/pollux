@@ -24,7 +24,7 @@ pub(crate) struct GeminiCliRefreshTokenSeed {
 }
 
 impl GeminiCliRefreshTokenSeed {
-    pub fn new(refresh_token: String) -> Option<Self> {
+    pub fn new(refresh_token: &str) -> Option<Self> {
         let refresh_token = refresh_token.trim().to_string();
         if refresh_token.is_empty() {
             return None;
@@ -130,7 +130,7 @@ impl GeminiCliActorHandle {
     pub(crate) fn submit_refresh_tokens(&self, refresh_tokens: Vec<String>) {
         let seeds: Vec<GeminiCliRefreshTokenSeed> = refresh_tokens
             .into_iter()
-            .filter_map(GeminiCliRefreshTokenSeed::new)
+            .filter_map(|t| GeminiCliRefreshTokenSeed::new(&t))
             .collect();
 
         if seeds.is_empty() {

@@ -349,7 +349,7 @@ pub struct GeminiCliErrorObject {
     pub extra: BTreeMap<String, Value>,
 }
 
-/// Variant classification for 429 RESOURCE_EXHAUSTED errors.
+/// Variant classification for 429 `RESOURCE_EXHAUSTED` errors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RateLimitVariant {
     QuotaCooldown(u64),

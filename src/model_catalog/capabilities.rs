@@ -9,25 +9,25 @@ pub struct ModelCapabilities(u64);
 
 impl ModelCapabilities {
     /// Creates an empty set (no capabilities enabled).
-    #[inline(always)]
+    #[inline]
     pub fn none() -> Self {
         Self(0)
     }
 
     /// Creates a full set (all bits enabled), often used as a default.
-    #[inline(always)]
+    #[inline]
     pub fn all() -> Self {
         Self(u64::MAX) // Use ((1 << n) - 1) to bound by the actual model count.
     }
 
     /// Builds from raw bits (e.g., loaded from storage).
-    #[inline(always)]
+    #[inline]
     pub fn from_bits(bits: u64) -> Self {
         Self(bits)
     }
 
     /// Returns the raw bitset (e.g., for persistence or interop).
-    #[inline(always)]
+    #[inline]
     pub fn bits(&self) -> u64 {
         self.0
     }
@@ -36,46 +36,46 @@ impl ModelCapabilities {
 
     /// Checks whether a specific model index is enabled.
     /// Semantics: `caps.supports(index)`.
-    #[inline(always)]
+    #[inline]
     pub fn supports(&self, index: usize) -> bool {
         (self.0 & (1u64 << index)) != 0
     }
 
     /// Enables the bit for a given model index.
-    #[inline(always)]
+    #[inline]
     pub fn enable(&mut self, index: usize) {
         self.0 |= 1u64 << index;
     }
 
     /// Clears the bit for a given model index.
-    #[inline(always)]
+    #[inline]
     pub fn disable(&mut self, index: usize) {
         self.0 &= !(1u64 << index);
     }
 
     /// Clears bits for all models included in the given bitmask.
     /// This is useful when the caller naturally has a model mask instead of an index.
-    #[inline(always)]
+    #[inline]
     pub fn disable_mask(&mut self, mask: u64) {
         self.0 &= !mask;
     }
 
     /// Returns true if `self` is a superset of `required`.
     /// Example: a request needs [GPT4 + Stream], so the provider must contain both.
-    #[inline(always)]
+    #[inline]
     pub fn contains_all(&self, required: ModelCapabilities) -> bool {
         (self.0 & required.0) == required.0
     }
 
     /// Returns true if there is any overlap between the two sets.
     /// Example: supporting any one of several fallback models is sufficient.
-    #[inline(always)]
+    #[inline]
     pub fn intersects(&self, other: ModelCapabilities) -> bool {
         (self.0 & other.0) != 0
     }
 
     /// Returns the union of two capability sets.
-    #[inline(always)]
+    #[inline]
     pub fn merge(&self, other: ModelCapabilities) -> Self {
         Self(self.0 | other.0)
     }
@@ -86,7 +86,6 @@ use std::ops::{BitAnd, BitOr};
 
 impl BitOr for ModelCapabilities {
     type Output = Self;
-    #[inline(always)]
     fn bitor(self, rhs: Self) -> Self {
         Self(self.0 | rhs.0)
     }
@@ -94,7 +93,6 @@ impl BitOr for ModelCapabilities {
 
 impl BitAnd for ModelCapabilities {
     type Output = Self;
-    #[inline(always)]
     fn bitand(self, rhs: Self) -> Self {
         Self(self.0 & rhs.0)
     }

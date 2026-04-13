@@ -1,4 +1,4 @@
-//! ProviderPatch -> DbPatchable implementation.
+//! `ProviderPatch` -> `DbPatchable` implementation.
 //!
 //! This sits in the `db` module because it contains SQL/table knowledge.
 

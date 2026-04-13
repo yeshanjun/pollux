@@ -22,7 +22,7 @@ use super::super::{
 #[derive(Debug)]
 pub enum CodexActorMessage {
     /// Request one available credential for the given model mask.
-    /// The optional `u64` is the route_key (ahash of session_id) for session affinity.
+    /// The optional `u64` is the `route_key` (ahash of `session_id`) for session affinity.
     /// Returns `None` if none available.
     GetCredential {
         model_mask: u64,
@@ -48,7 +48,7 @@ pub enum CodexActorMessage {
 
     /// Submit a trusted OAuth token response (from the server-side OAuth exchange).
     ///
-    /// This should already contain access_token + expiry + id_token. The actor will convert it
+    /// This should already contain `access_token` + `expiry` + `id_token`. The actor will convert it
     /// into a trusted ingest job, then persist+activate it through the same completion path as
     /// other credential ingest flows.
     SubmitTrustedOauth(OauthTokenResponse),
@@ -133,7 +133,7 @@ impl CodexActorHandle {
     pub(crate) fn submit_refresh_tokens(&self, refresh_tokens: Vec<String>) {
         let seeds: Vec<CodexRefreshTokenSeed> = refresh_tokens
             .into_iter()
-            .filter_map(CodexRefreshTokenSeed::new)
+            .filter_map(|t| CodexRefreshTokenSeed::new(&t))
             .collect();
 
         if seeds.is_empty() {
@@ -339,7 +339,7 @@ impl CodexActor {
             Self::handle_report_invalid(myself, state, assignment.refresh_ids);
         }
 
-        let stats = state.manager.stats(model_mask);
+        let sched_stats = state.manager.stats(model_mask);
 
         if let Some(assigned) = assignment.assigned {
             if let Some(rk) = route_key
@@ -355,10 +355,10 @@ impl CodexActor {
                 email = %assigned.email.as_deref().unwrap_or("-"),
                 model_mask = format_args!("0x{model_mask:016x}"),
                 sticky = assignment.route_hit,
-                queue = stats.queue_len,
-                total = stats.total_creds,
-                cooling = stats.cooldowns,
-                refreshing = stats.refreshing,
+                queue = sched_stats.queue_len,
+                total = sched_stats.total_creds,
+                cooling = sched_stats.cooldowns,
+                refreshing = sched_stats.refreshing,
                 "[Codex] Credential assigned"
             );
             let _ = reply_port.send(Some(assigned));
@@ -368,10 +368,10 @@ impl CodexActor {
         warn!(
             model_mask = format_args!("0x{model_mask:016x}"),
             sticky_id = ?sticky_id,
-            queue = stats.queue_len,
-            total = stats.total_creds,
-            cooling = stats.cooldowns,
-            refreshing = stats.refreshing,
+            queue = sched_stats.queue_len,
+            total = sched_stats.total_creds,
+            cooling = sched_stats.cooldowns,
+            refreshing = sched_stats.refreshing,
             skipped.cooling = assignment.stats.skipped_cooling,
             skipped.refreshing = assignment.stats.skipped_refreshing,
             skipped.expired = assignment.stats.skipped_expired,
@@ -473,7 +473,7 @@ impl CodexActor {
 
         tokio::spawn(async move {
             for seed in seeds {
-                let job = match CredentialJob::ingest_untrusted_seed(seed) {
+                let job = match CredentialJob::ingest_untrusted_seed(&seed) {
                     Ok(job) => job,
                     Err(e) => {
                         warn!(
@@ -499,7 +499,7 @@ impl CodexActor {
         info!("Trusted OAuth submit received, dispatching trusted ingest...");
         let processor_handle = state.processor_handle.clone();
         tokio::spawn(async move {
-            let job = match CredentialJob::ingest_trusted_oauth(token_response) {
+            let job = match CredentialJob::ingest_trusted_oauth(&token_response) {
                 Ok(job) => job,
                 Err(e) => {
                     warn!("Trusted OAuth submit ignored: {}", e);

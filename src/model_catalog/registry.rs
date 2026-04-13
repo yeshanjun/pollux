@@ -18,13 +18,12 @@ impl ModelRegistry {
     /// # Panics
     /// Panics if the number of models exceeds 64, because the bitset is `u64`.
     pub fn new(models: &[String]) -> Self {
-        if models.len() > 64 {
-            panic!(
-                "ModelRegistry limits to 64 models (current: {}). \
-                Consider upgrading to u128 or separating clusters.",
-                models.len()
-            );
-        }
+        assert!(
+            models.len() <= 64,
+            "ModelRegistry limits to 64 models (current: {}). \
+            Consider upgrading to u128 or separating clusters.",
+            models.len()
+        );
 
         let mut name_to_index = HashMap::with_capacity(models.len());
         let mut index_to_name = Vec::with_capacity(models.len());

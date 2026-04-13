@@ -24,7 +24,7 @@ pub(crate) struct AntigravityRefreshTokenSeed {
 }
 
 impl AntigravityRefreshTokenSeed {
-    pub fn new(refresh_token: String) -> Option<Self> {
+    pub fn new(refresh_token: &str) -> Option<Self> {
         let refresh_token = refresh_token.trim().to_string();
         if refresh_token.is_empty() {
             return None;
@@ -39,14 +39,14 @@ impl AntigravityRefreshTokenSeed {
 
 #[derive(Debug)]
 pub(crate) enum RefreshOutcome {
-    /// Refresh an existing DB credential (project_id must already exist).
+    /// Refresh an existing DB credential (`project_id` must already exist).
     RefreshCredential {
         id: u64,
         patch: AntigravityPatch,
         result: Result<(), PolluxError>,
     },
 
-    /// Refresh a 0-trust seed and discover a project_id.
+    /// Refresh a 0-trust seed and discover a `project_id`.
     OnboardSeed {
         seed: AntigravityRefreshTokenSeed,
         result: Result<AntigravityCreate, PolluxError>,
@@ -125,8 +125,8 @@ impl AntigravityRefresherHandle {
 /// Spawn a background refresher pipeline for Antigravity refresh/onboarding.
 ///
 /// This mirrors the geminicli/codex refresher pipeline shape:
-/// - governor rate limiter (oauth_tps)
-/// - buffer_unordered concurrency
+/// - governor rate limiter (`oauth_tps`)
+/// - `buffer_unordered` concurrency
 /// - deterministic retry policy inside the ops layer
 pub(crate) fn spawn_pipeline(
     cfg: Arc<AntigravityResolvedConfig>,
@@ -213,7 +213,7 @@ async fn refresh_existing(
     let token =
         AntigravityOauthEndpoints::refresh_access_token(&cfg, refresh_token, http_client).await?;
 
-    let access_token = token.access_token().secret().to_string();
+    let access_token = token.access_token().secret().clone();
 
     let expires_in = token.expires_in().unwrap_or(Duration::from_secs(3600));
     let expiry = Utc::now()
@@ -240,7 +240,7 @@ async fn refresh_and_discover(
     )
     .await?;
 
-    let access_token = token.access_token().secret().to_string();
+    let access_token = token.access_token().secret().clone();
 
     let expires_in = token.expires_in().unwrap_or(Duration::from_secs(3600));
     let expiry = Utc::now()

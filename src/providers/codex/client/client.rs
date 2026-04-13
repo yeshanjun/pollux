@@ -31,7 +31,7 @@ pub(crate) struct CodexClient {
 impl CodexClient {
     pub(crate) fn new(
         client: reqwest::Client,
-        base_url: Url,
+        base_url: &Url,
         retry_max_times: usize,
         trace_header: Option<String>,
     ) -> Self {
@@ -40,7 +40,7 @@ impl CodexClient {
             .with_max_delay(Duration::ZERO)
             .with_max_times(retry_max_times);
         let compact_url = Self::compact_url(&base_url);
-        let endpoints = Self::endpoints_for_base(base_url);
+        let endpoints = Self::endpoints_for_base(&base_url);
         info!(endpoint = %endpoints.select(false), "CodexClient initialized");
 
         Self {
@@ -52,9 +52,9 @@ impl CodexClient {
         }
     }
 
-    fn endpoints_for_base(base: Url) -> ProviderEndpoints {
+    fn endpoints_for_base(base: &Url) -> ProviderEndpoints {
         ProviderEndpoints::new(
-            &base,
+            base,
             "./backend-api/codex/responses",
             None,
             "./backend-api/codex/responses",
@@ -261,7 +261,7 @@ impl CodexClient {
             }
 
             let resp =
-                post_json_with_retry("Codex", client, &compact_url, Some(upstream_headers), body)
+                post_json_with_retry("Codex", client, compact_url, Some(upstream_headers), body)
                     .await?;
 
             if resp.status().is_success() {

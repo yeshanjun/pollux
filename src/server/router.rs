@@ -157,13 +157,13 @@ impl PolluxState {
 
         let geminicli_caller = GeminiClient::new(
             geminicli_caller_client,
-            geminicli_cfg.custom_api_url.clone(),
+            &geminicli_cfg.custom_api_url,
             geminicli_cfg.retry_max_times,
             geminicli_cfg.trace_header.clone(),
         );
         let codex_caller = CodexClient::new(
             codex_caller_client,
-            codex_cfg.custom_api_url.clone(),
+            &codex_cfg.custom_api_url,
             codex_cfg.retry_max_times,
             codex_cfg.trace_header.clone(),
         );

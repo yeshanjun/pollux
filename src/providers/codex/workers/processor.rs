@@ -222,7 +222,7 @@ impl CredentialJob {
     }
 
     pub(in crate::providers::codex) fn ingest_untrusted_seed(
-        seed: CodexRefreshTokenSeed,
+        seed: &CodexRefreshTokenSeed,
     ) -> Result<Self, PolluxError> {
         let mut cred = CodexResource::default();
         cred.update_credential(json!({ "refresh_token": seed.refresh_token() }))?;
@@ -233,9 +233,9 @@ impl CredentialJob {
     }
 
     pub(in crate::providers::codex) fn ingest_trusted_oauth(
-        token_response: OauthTokenResponse,
+        token_response: &OauthTokenResponse,
     ) -> Result<Self, PolluxError> {
-        let cred = CodexResource::try_from_oauth_token_response(token_response, None)?;
+        let cred = CodexResource::try_from_oauth_token_response(&token_response, None)?;
         Ok(Self {
             cred,
             kind: CredentialJobKind::IngestTrusted,
@@ -268,7 +268,7 @@ impl CredentialJob {
             }
             CredentialJobKind::IngestUntrusted => {
                 let refresh_token = self.cred.refresh_token().trim().to_string();
-                let refresh_seed = CodexRefreshTokenSeed::new(refresh_token).ok_or_else(|| {
+                let refresh_seed = CodexRefreshTokenSeed::new(&refresh_token).ok_or_else(|| {
                     PolluxError::UnexpectedError(
                         "Missing refresh_token for untrusted Codex credential ingest".to_string(),
                     )
@@ -330,7 +330,7 @@ async fn refresh_credential(
     let token_response = request_token_refresh(client, retry_policy, refresh_token).await?;
 
     if let Some(seed) = refresh_seed {
-        *creds = CodexResource::try_from_oauth_token_response(token_response, Some(seed))?;
+        *creds = CodexResource::try_from_oauth_token_response(&token_response, Some(&seed))?;
     } else {
         creds.update_credential(&token_response)?;
         debug!(account_id = %creds.account_id(), "Access token refreshed successfully");
@@ -388,9 +388,9 @@ mod tests {
 
     #[test]
     fn untrusted_ingest_job_sets_refresh_token() {
-        let seed = CodexRefreshTokenSeed::new("seed-rt".to_string()).expect("valid seed");
+        let seed = CodexRefreshTokenSeed::new("seed-rt").expect("valid seed");
 
-        let job = CredentialJob::ingest_untrusted_seed(seed).expect("ingest job");
+        let job = CredentialJob::ingest_untrusted_seed(&seed).expect("ingest job");
 
         assert!(matches!(job.kind, CredentialJobKind::IngestUntrusted));
         assert_eq!(job.cred.refresh_token(), "seed-rt");
@@ -418,7 +418,7 @@ mod tests {
         .expect("token response deserializes");
 
         let job =
-            CredentialJob::ingest_trusted_oauth(token_response).expect("trusted oauth ingest job");
+            CredentialJob::ingest_trusted_oauth(&token_response).expect("trusted oauth ingest job");
 
         let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
         let completed = runtime

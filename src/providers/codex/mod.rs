@@ -21,7 +21,6 @@ pub(crate) use submission::CodexRefreshTokenSeed;
 /// Hard-coded Codex-style User-Agent string kept as a fallback.
 ///
 /// This is intentionally fixed (no runtime detection) to keep behavior predictable.
-/// codex_cli_rs/0.117.0 (Debian 12.0.0; x86_64) vscode/1.113.0 (codex-tui; 0.117.0)
 pub(crate) const CODEX_USER_AGENT: &str =
     "codex-tui/0.118.0 (Debian 12.0.0; x86_64) vscode/1.114.0 (codex-tui; 0.118.0)";
 

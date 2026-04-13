@@ -9,7 +9,7 @@ pub(crate) struct CodexRefreshTokenSeed {
 }
 
 impl CodexRefreshTokenSeed {
-    pub(crate) fn new(refresh_token: String) -> Option<Self> {
+    pub(crate) fn new(refresh_token: &str) -> Option<Self> {
         let refresh_token = refresh_token.trim().to_string();
         if refresh_token.is_empty() {
             return None;

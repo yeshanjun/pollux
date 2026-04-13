@@ -24,7 +24,7 @@ pub(crate) struct GeminiClient {
 impl GeminiClient {
     pub fn new(
         client: reqwest::Client,
-        base_url: Url,
+        base_url: &Url,
         retry_max_times: usize,
         trace_header: Option<String>,
     ) -> Self {
@@ -32,7 +32,7 @@ impl GeminiClient {
             .with_min_delay(Duration::ZERO)
             .with_max_delay(Duration::ZERO)
             .with_max_times(retry_max_times);
-        let endpoints = Self::endpoints_for_base(base_url);
+        let endpoints = Self::endpoints_for_base(&base_url);
         info!(endpoint = %endpoints.select(false), "GeminiClient initialized");
 
         Self {
@@ -43,9 +43,9 @@ impl GeminiClient {
         }
     }
 
-    fn endpoints_for_base(base: Url) -> ProviderEndpoints {
+    fn endpoints_for_base(base: &Url) -> ProviderEndpoints {
         ProviderEndpoints::new(
-            &base,
+            base,
             "./v1internal:streamGenerateContent",
             Some("alt=sse"),
             "./v1internal:generateContent",

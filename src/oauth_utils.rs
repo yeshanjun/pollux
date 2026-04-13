@@ -13,7 +13,7 @@ use std::collections::HashMap;
 
 /// Extra (non-standard) OAuth token response fields.
 ///
-/// We keep OpenID Connect's `id_token` plus any additional JSON fields via `flatten` for forward
+/// We keep `OpenID` Connect's `id_token` plus any additional JSON fields via `flatten` for forward
 /// compatibility. Debug output is redacted to avoid leaking secrets.
 #[derive(Clone, Deserialize, Serialize)]
 pub(crate) struct CustomTokenFields {
@@ -38,10 +38,10 @@ impl std::fmt::Debug for CustomTokenFields {
     }
 }
 
-/// Standard OAuth2 token endpoint response extended with [`CustomTokenFields`].
+/// Standard `OAuth2` token endpoint response extended with [`CustomTokenFields`].
 pub(crate) type OauthTokenResponse = StandardTokenResponse<CustomTokenFields, BasicTokenType>;
 
-/// A standard OAuth2 client configured to return [`OauthTokenResponse`].
+/// A standard `OAuth2` client configured to return [`OauthTokenResponse`].
 pub(crate) type StandardOauth2Client<
     HasAuthUrl = oauth2::EndpointSet,
     HasDeviceAuthUrl = oauth2::EndpointNotSet,
@@ -61,10 +61,10 @@ pub(crate) type StandardOauth2Client<
     HasTokenUrl,
 >;
 
-/// Build a standard OAuth2 client for `authorization_code` + `refresh_token` flows.
+/// Build a standard `OAuth2` client for `authorization_code` + `refresh_token` flows.
 ///
 /// This intentionally lives at the crate boundary (not inside provider modules) to keep OAuth
-/// glue reusable and dependency flow one-way (providers -> oauth_utils).
+/// glue reusable and dependency flow one-way (providers -> `oauth_utils`).
 pub(crate) fn build_oauth2_client(
     client_id: &str,
     client_secret: Option<&str>,

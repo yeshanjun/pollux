@@ -75,6 +75,8 @@ impl GeminiCliResource {
     ///   and full credential JSON (`project_id`, `expiry`, etc.).
     /// - Only updates fields present in the JSON; others remain unchanged.
     pub fn update_credential(&mut self, payload: impl Serialize) -> Result<(), PolluxError> {
+        use crate::providers::credential_update::{apply_expiry, parse_patch, set_opt, set_plain};
+
         #[derive(Debug, Default, Deserialize)]
         struct CredentialPatch {
             email: Option<String>,
@@ -86,35 +88,14 @@ impl GeminiCliResource {
             expires_in: Option<i64>,
         }
 
-        let value = serde_json::to_value(payload)?;
-        let patch: CredentialPatch = serde_json::from_value(value)?;
+        let patch: CredentialPatch = parse_patch(payload)?;
 
-        macro_rules! set_plain {
-            ($field:ident) => {
-                if let Some(v) = patch.$field {
-                    self.$field = v;
-                }
-            };
-        }
-        macro_rules! set_opt {
-            ($field:ident) => {
-                if let Some(v) = patch.$field {
-                    self.$field = Some(v);
-                }
-            };
-        }
-
-        set_opt!(email);
-        set_plain!(sub);
-        set_plain!(project_id);
-        set_plain!(refresh_token);
-        set_plain!(access_token);
-
-        if let Some(secs) = patch.expires_in {
-            self.expiry = Utc::now() + Duration::seconds(secs);
-        } else if let Some(dt) = patch.expiry {
-            self.expiry = dt;
-        }
+        set_opt(&mut self.email, patch.email);
+        set_plain(&mut self.sub, patch.sub);
+        set_plain(&mut self.project_id, patch.project_id);
+        set_plain(&mut self.refresh_token, patch.refresh_token);
+        set_plain(&mut self.access_token, patch.access_token);
+        apply_expiry(&mut self.expiry, patch.expires_in, patch.expiry);
 
         debug!(
             "Project_ID {}, resource updated successfully",
@@ -134,6 +115,10 @@ impl GeminiCliResource {
 
 impl Schedulable for GeminiCliResource {
     type Lease = GeminiCliLease;
+
+    fn identifier(&self) -> &str {
+        &self.project_id
+    }
 
     fn is_expired(&self) -> bool {
         self.is_expired()

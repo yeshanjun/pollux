@@ -4,10 +4,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
-crate::impl_untagged_opt!(
+crate::impl_string_or_array_opt_deserializer!(
     deserialize_openai_input,
     OpenaiInput,
-    OpenaiInput::Null,
     OpenaiInput::Items,
     |s: String| {
         OpenaiInput::Items(vec![OpenaiInputItem {
@@ -21,10 +20,9 @@ crate::impl_untagged_opt!(
     }
 );
 
-crate::impl_untagged_opt!(
+crate::impl_string_or_array_opt_deserializer!(
     deserialize_openai_message_content,
     OpenaiInputContent,
-    OpenaiInputContent::Null,
     OpenaiInputContent::Parts,
     |s: String| {
         OpenaiInputContent::Parts(vec![serde_json::json!({
@@ -56,7 +54,7 @@ pub struct OpenaiRequestBody {
     ///
     /// We normalize `input` to the canonical "input items" array form:
     /// - missing => `None`
-    /// - null => `Some(OpenaiInput::Null)`
+    /// - null => `None`
     /// - string => `Some(OpenaiInput::Items([{"role":"user","content":[{"type":"input_text","text":"..."}]}]))`
     /// - array => `Some(OpenaiInput::Items(...))` (passthrough, but parsed into typed input items)
     #[serde(
@@ -132,11 +130,8 @@ pub struct OpenaiInputItem {
 
     /// OpenAI docs: `string | array`.
     ///
-    /// IMPORTANT: distinguish between a missing `content` (None) and an explicit `null`
-    /// (Some(OpenaiInputContent::Null)) so passthrough behavior stays faithful to the incoming
-    /// payload.
-    ///
     /// We normalize:
+    /// - missing/null => `None`
     /// - string => `[{ "type": "input_text", "text": "..." }]`
     /// - array  => passthrough
     #[serde(
@@ -152,17 +147,19 @@ pub struct OpenaiInputItem {
     pub extra: BTreeMap<String, Value>,
 }
 
+/// Normalized OpenAI Responses input.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum OpenaiInput {
-    Null(()),
+    /// Canonical input item array.
     Items(Vec<OpenaiInputItem>),
 }
 
+/// Normalized content for OpenAI message input items.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum OpenaiInputContent {
-    Null(()),
+    /// Canonical content parts array.
     Parts(Vec<Value>),
 }
 
@@ -260,12 +257,10 @@ mod tests {
         }))
         .expect("failed to deserialize");
 
-        let OpenaiInput::Items(input) = body.input.expect("missing input") else {
-            panic!("expected OpenaiInput::Items");
-        };
+        let OpenaiInput::Items(input) = body.input.expect("missing input");
         assert_eq!(input.len(), 1);
         assert_eq!(input[0].role, None);
-        assert_eq!(input[0].content, Some(OpenaiInputContent::Null(())));
+        assert_eq!(input[0].content, None);
         assert_eq!(input[0].extra.get("type"), Some(&json!("reasoning")));
         assert_eq!(input[0].extra.get("summary"), Some(&json!("auto")));
         assert_eq!(
@@ -336,17 +331,35 @@ mod tests {
     }
 
     #[test]
-    fn openai_request_body_preserves_null_input_field() {
+    fn openai_request_body_treats_null_input_as_none() {
         let body: OpenaiRequestBody = serde_json::from_value(json!({
             "model": "gpt-4o-mini",
             "input": null,
         }))
         .expect("failed to deserialize");
 
-        assert_eq!(body.input, Some(OpenaiInput::Null(())));
+        assert_eq!(body.input, None);
 
         let out = serde_json::to_value(&body).expect("failed to serialize");
-        assert_eq!(out.get("input"), Some(&Value::Null));
+        assert_eq!(out.get("input"), None);
+    }
+
+    #[test]
+    fn openai_request_body_treats_null_message_content_as_none() {
+        let body: OpenaiRequestBody = serde_json::from_value(json!({
+            "model": "gpt-4o-mini",
+            "input": [{
+                "role": "assistant",
+                "content": null,
+            }],
+        }))
+        .expect("failed to deserialize");
+
+        let OpenaiInput::Items(input) = body.input.expect("missing input");
+        assert_eq!(input[0].content, None);
+
+        let out = serde_json::to_value(&input[0]).expect("failed to serialize input item");
+        assert_eq!(out.get("content"), None);
     }
 
     #[test]

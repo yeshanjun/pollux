@@ -1,9 +1,15 @@
 #[macro_export]
-macro_rules! impl_untagged_opt {
+/// Generate an `Option<T>` deserializer for API fields that accept string or array forms.
+///
+/// The generated function accepts:
+/// - missing field via `#[serde(default)]` as `None`
+/// - JSON `null` as `None`
+/// - JSON string via the supplied mapper expression
+/// - JSON array via the supplied array variant constructor
+macro_rules! impl_string_or_array_opt_deserializer {
     (
         $fn_name:ident,
         $type_name:ident,
-        $variant_null:path,
         $variant_arr:path,
         $str_mapper:expr
     ) => {
@@ -24,15 +30,14 @@ macro_rules! impl_untagged_opt {
                 where
                     E: serde::de::Error,
                 {
-                    Ok(Some($variant_null(())))
+                    Ok(None)
                 }
 
                 fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
                 where
                     E: serde::de::Error,
                 {
-                    let mapper = $str_mapper;
-                    Ok(Some(mapper(value.to_string())))
+                    self.visit_string(value.to_owned())
                 }
 
                 fn visit_string<E>(self, value: String) -> Result<Self::Value, E>

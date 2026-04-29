@@ -1,7 +1,7 @@
 use crate::config::CodexResolvedConfig;
 use crate::error::{IsRetryable, OauthError, PolluxError};
+use crate::providers::RefreshTokenSeed;
 use crate::providers::codex::{
-    CodexRefreshTokenSeed,
     client::oauth::{OAUTH_RETRY_POLICY, endpoints::CodexOauthEndpoints},
     manager::{CodexActorHandle, CredentialId},
     oauth::OauthTokenResponse,
@@ -222,7 +222,7 @@ impl CredentialJob {
     }
 
     pub(in crate::providers::codex) fn ingest_untrusted_seed(
-        seed: &CodexRefreshTokenSeed,
+        seed: &RefreshTokenSeed,
     ) -> Result<Self, PolluxError> {
         let mut cred = CodexResource::default();
         cred.update_credential(json!({ "refresh_token": seed.refresh_token() }))?;
@@ -268,7 +268,7 @@ impl CredentialJob {
             }
             CredentialJobKind::IngestUntrusted => {
                 let refresh_token = self.cred.refresh_token().trim().to_string();
-                let refresh_seed = CodexRefreshTokenSeed::new(&refresh_token).ok_or_else(|| {
+                let refresh_seed = RefreshTokenSeed::new(&refresh_token).ok_or_else(|| {
                     PolluxError::UnexpectedError(
                         "Missing refresh_token for untrusted Codex credential ingest".to_string(),
                     )
@@ -321,7 +321,7 @@ async fn refresh_credential(
     client: reqwest::Client,
     retry_policy: ExponentialBuilder,
     creds: &mut CodexResource,
-    refresh_seed: Option<CodexRefreshTokenSeed>,
+    refresh_seed: Option<RefreshTokenSeed>,
 ) -> Result<(), PolluxError> {
     let refresh_token = match &refresh_seed {
         Some(seed) => seed.refresh_token(),
@@ -388,7 +388,7 @@ mod tests {
 
     #[test]
     fn untrusted_ingest_job_sets_refresh_token() {
-        let seed = CodexRefreshTokenSeed::new("seed-rt").expect("valid seed");
+        let seed = RefreshTokenSeed::new("seed-rt").expect("valid seed");
 
         let job = CredentialJob::ingest_untrusted_seed(&seed).expect("ingest job");
 

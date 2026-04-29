@@ -219,7 +219,7 @@ async fn codex_response_route_rejects_bad_requests_and_requires_key() {
         .await
         .expect("failed to read response body");
     let body_str = std::str::from_utf8(&body).expect("response body was not utf-8");
-    assert!(body_str.contains("数据格式不允许"));
+    assert!(body_str.contains("Invalid payload format"));
 
     // 10) POST /codex/resource:add: correct key + array payload -> 202 + Success
     let resp = app

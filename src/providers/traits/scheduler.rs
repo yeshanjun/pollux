@@ -30,6 +30,13 @@ pub trait Schedulable: Clone + Debug {
     /// Defaults to `PerModel` (per-model independent cooldown).
     const COOLDOWN_GRANULARITY: CooldownScope = CooldownScope::PerModel;
 
+    /// Provider-agnostic label for logging and diagnostics.
+    ///
+    /// Returns `project_id` for GCP-backed providers or `account_id` for
+    /// account-keyed providers.  The value is only used for human-readable
+    /// output — never for scheduling decisions.
+    fn identifier(&self) -> &str;
+
     /// Check if the credential has expired and needs token refresh.
     fn is_expired(&self) -> bool;
 
@@ -492,6 +499,11 @@ impl<R: Schedulable> ResourceScheduler<R> {
         self.creds.get(&id).map(|c| &c.inner)
     }
 
+    /// Shorthand for logging: returns the credential's identifier or `"-"`.
+    pub fn get_identifier(&self, id: CredentialId) -> &str {
+        self.get_credential(id).map_or("-", R::identifier)
+    }
+
     /// Returns a clone of the inner resource for the given credential.
     pub fn get_credential_clone(&self, id: CredentialId) -> Option<R> {
         self.creds.get(&id).map(|c| c.inner.clone())
@@ -593,6 +605,10 @@ mod tests {
     impl Schedulable for MockResource {
         type Lease = MockLease;
 
+        fn identifier(&self) -> &str {
+            "mock"
+        }
+
         fn is_expired(&self) -> bool {
             self.0
         }
@@ -609,6 +625,10 @@ mod tests {
     impl Schedulable for MockPerCredResource {
         type Lease = MockLease;
         const COOLDOWN_GRANULARITY: CooldownScope = CooldownScope::PerCredential;
+
+        fn identifier(&self) -> &str {
+            "mock-per-cred"
+        }
 
         fn is_expired(&self) -> bool {
             self.0

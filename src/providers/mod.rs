@@ -5,6 +5,7 @@ pub mod manifest;
 pub(crate) mod traits;
 
 mod bootstrap;
+mod credential_patch;
 mod policy;
 mod provider_endpoints;
 mod seed;

@@ -90,6 +90,8 @@ impl CodexResource {
     /// Only updates fields present in the JSON; others remain unchanged.
     #[allow(dead_code)]
     pub fn update_credential(&mut self, payload: impl Serialize) -> Result<(), PolluxError> {
+        use crate::providers::credential_patch::{apply_expiry, parse_patch, set_opt, set_plain};
+
         #[derive(Debug, Default, Deserialize)]
         struct CredentialPatch {
             email: Option<String>,
@@ -102,36 +104,15 @@ impl CodexResource {
             chatgpt_plan_type: Option<String>,
         }
 
-        let value = serde_json::to_value(payload)?;
-        let patch: CredentialPatch = serde_json::from_value(value)?;
+        let patch: CredentialPatch = parse_patch(payload)?;
 
-        macro_rules! set_plain {
-            ($field:ident) => {
-                if let Some(v) = patch.$field {
-                    self.$field = v;
-                }
-            };
-        }
-        macro_rules! set_opt {
-            ($field:ident) => {
-                if let Some(v) = patch.$field {
-                    self.$field = Some(v);
-                }
-            };
-        }
-
-        set_opt!(email);
-        set_plain!(account_id);
-        set_plain!(sub);
-        set_plain!(refresh_token);
-        set_plain!(access_token);
-        set_opt!(chatgpt_plan_type);
-
-        if let Some(secs) = patch.expires_in {
-            self.expiry = Utc::now() + Duration::seconds(secs);
-        } else if let Some(dt) = patch.expiry {
-            self.expiry = dt;
-        }
+        set_opt(&mut self.email, patch.email);
+        set_plain(&mut self.account_id, patch.account_id);
+        set_plain(&mut self.sub, patch.sub);
+        set_plain(&mut self.refresh_token, patch.refresh_token);
+        set_plain(&mut self.access_token, patch.access_token);
+        set_opt(&mut self.chatgpt_plan_type, patch.chatgpt_plan_type);
+        apply_expiry(&mut self.expiry, patch.expires_in, patch.expiry);
 
         debug!(
             "account_id={}, sub={}, Codex resource updated successfully",

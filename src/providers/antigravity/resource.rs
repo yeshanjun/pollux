@@ -39,10 +39,6 @@ impl AntigravityResource {
         Utc::now() + Duration::minutes(5) >= self.expiry
     }
 
-    pub fn project_id(&self) -> &str {
-        &self.project_id
-    }
-
     #[allow(dead_code)]
     pub fn sub(&self) -> &str {
         &self.sub
@@ -123,6 +119,10 @@ impl AntigravityResource {
 
 impl Schedulable for AntigravityResource {
     type Lease = AntigravityLease;
+
+    fn identifier(&self) -> &str {
+        &self.project_id
+    }
 
     fn is_expired(&self) -> bool {
         self.is_expired()

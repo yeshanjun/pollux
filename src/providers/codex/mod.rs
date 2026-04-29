@@ -22,6 +22,6 @@ pub(crate) use submission::CodexRefreshTokenSeed;
 ///
 /// This is intentionally fixed (no runtime detection) to keep behavior predictable.
 pub(crate) const CODEX_USER_AGENT: &str =
-    "codex-tui/0.118.0 (Debian 12.0.0; x86_64) vscode/1.114.0 (codex-tui; 0.118.0)";
+    "codex-tui/0.125.0 (Debian 12.0.0; x86_64) vscode/1.117.0 (codex-tui; 0.125.0)";
 
 pub(crate) const DEFAULT_ORIGINATOR: &str = "codex-tui";

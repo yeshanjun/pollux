@@ -206,6 +206,10 @@ impl Schedulable for CodexResource {
     type Lease = CodexLease;
     const COOLDOWN_GRANULARITY: CooldownScope = CooldownScope::PerCredential;
 
+    fn identifier(&self) -> &str {
+        &self.account_id
+    }
+
     fn is_expired(&self) -> bool {
         self.is_expired()
     }

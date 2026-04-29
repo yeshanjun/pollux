@@ -12,7 +12,7 @@ use crate::providers::geminicli::workers::{
 };
 use crate::providers::geminicli::{SUPPORTED_MODEL_MASK, SUPPORTED_MODEL_NAMES};
 use crate::providers::manifest::{GeminiCliLease, GeminiCliProfile};
-use crate::providers::traits::scheduler::{CredentialId, ResourceScheduler};
+use crate::providers::traits::scheduler::{CredentialId, ResourceScheduler, Schedulable};
 use ractor::{Actor, ActorProcessingErr, ActorRef, RpcReplyPort};
 use serde_json::json;
 use std::{sync::Arc, time::Duration};
@@ -269,11 +269,11 @@ impl Actor for GeminiCliActor {
                 Self::handle_process_complete(&myself, state, result);
             }
             GeminiCliActorMessage::ActivateCredential { id, credential } => {
-                let project = credential.project_id().to_string();
+                let ident = credential.identifier().to_owned();
                 state
                     .manager
                     .add_credential(id, credential, state.provider_supported_mask);
-                info!("ID: {id}, Project: {project}, submitted and activated");
+                info!("ID: {id}, Project: {ident}, submitted and activated");
             }
         }
         Ok(())
@@ -290,10 +290,7 @@ impl GeminiCliActor {
             return;
         }
 
-        let project_id = state
-            .manager
-            .get_credential(id)
-            .map_or_else(|| "-".to_string(), |r| r.project_id().to_string());
+        let ident = state.manager.get_identifier(id).to_owned();
 
         // Scheduler is pure logic; log the state transition at the actor boundary.
         let Some((before_bits, after_bits)) = state.manager.mark_model_unsupported(id, model_mask)
@@ -308,12 +305,12 @@ impl GeminiCliActor {
         if after_bits == 0 {
             warn!(
                 "GeminiCli credential id={} project={} now supports no models after disabling {} (mask=0x{:016x}); caps 0x{:016x} -> 0x{:016x}",
-                id, project_id, disabled_names, model_mask, before_bits, after_bits
+                id, ident, disabled_names, model_mask, before_bits, after_bits
             );
         } else {
             info!(
                 "GeminiCli credential id={} project={} disabled models {} (mask=0x{:016x}); caps 0x{:016x} -> 0x{:016x}",
-                id, project_id, disabled_names, model_mask, before_bits, after_bits
+                id, ident, disabled_names, model_mask, before_bits, after_bits
             );
         }
     }
@@ -400,7 +397,7 @@ impl GeminiCliActor {
                 info!(
                     "ID: {}, Project: {}, batch invalid reported.",
                     id,
-                    current.project_id()
+                    current.identifier()
                 );
 
                 jobs_to_send.push((id, current));
@@ -434,26 +431,23 @@ impl GeminiCliActor {
     }
 
     fn handle_report_baned(state: &mut GeminiCliActorState, id: CredentialId) {
-        let project = state
-            .manager
-            .get_credential(id)
-            .map_or_else(|| "-".to_string(), |r| r.project_id().to_string());
+        let ident = state.manager.get_identifier(id).to_owned();
         let removed_cred = state.manager.contains(id);
 
         state.manager.delete_credential(id);
 
         let ops = state.ops.clone();
-        let project_for_db = project.clone();
+        let ident_for_db = ident.clone();
         tokio::spawn(async move {
             if let Err(e) = ops.set_status(id, false).await {
                 warn!(
-                    "ID: {id}, Project: {project_for_db}, ban report failed to update DB status: {}",
+                    "ID: {id}, Project: {ident_for_db}, ban report failed to update DB status: {}",
                     e
                 );
             }
         });
         info!(
-            "ID: {id}, Project: {project}, banned. removed_from_mem={}",
+            "ID: {id}, Project: {ident}, banned. removed_from_mem={}",
             removed_cred
         );
     }
@@ -567,7 +561,7 @@ impl GeminiCliActor {
         // Process the refresh result: if success, update credential and re-enqueue; if failure, decide based on error type.
         match result {
             Ok(success) => {
-                let pid = success.cred.project_id().to_string();
+                let pid = success.cred.identifier().to_owned();
                 let cred = success.cred;
                 match success.kind {
                     CredentialJobKind::Refresh(id) => {
@@ -611,7 +605,7 @@ impl GeminiCliActor {
             Err(failed) => {
                 let job = failed.original_job;
                 let err = failed.error;
-                let pid = job.cred.project_id().to_string();
+                let pid = job.cred.identifier().to_owned();
                 warn!("RefreshTask failed for project {}: {}", pid, err);
                 match job.kind {
                     CredentialJobKind::Refresh(id) => {
@@ -636,7 +630,7 @@ impl GeminiCliActor {
                     CredentialJobKind::Ingest => {
                         warn!(
                             "Project: {} Onboard failed: {}. Discarding.",
-                            job.cred.project_id(),
+                            job.cred.identifier(),
                             err
                         );
                     }

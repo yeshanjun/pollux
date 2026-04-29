@@ -135,6 +135,10 @@ impl GeminiCliResource {
 impl Schedulable for GeminiCliResource {
     type Lease = GeminiCliLease;
 
+    fn identifier(&self) -> &str {
+        &self.project_id
+    }
+
     fn is_expired(&self) -> bool {
         self.is_expired()
     }

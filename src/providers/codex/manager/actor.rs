@@ -3,12 +3,13 @@ use crate::config::CodexResolvedConfig;
 use crate::db::CodexPatch;
 use crate::error::{OauthError, PolluxError};
 use crate::model_catalog::MODEL_REGISTRY;
+use crate::providers::RefreshTokenSeed;
 use crate::providers::codex::resource::CodexResource;
 use crate::providers::codex::{
-    CodexRefreshTokenSeed, SUPPORTED_MODEL_MASK, SUPPORTED_MODEL_NAMES, oauth::OauthTokenResponse,
+    SUPPORTED_MODEL_MASK, SUPPORTED_MODEL_NAMES, oauth::OauthTokenResponse,
 };
 use crate::providers::manifest::CodexLease;
-use crate::providers::traits::scheduler::{CredentialId, ResourceScheduler};
+use crate::providers::traits::scheduler::{CredentialId, ResourceScheduler, Schedulable};
 use ractor::{Actor, ActorProcessingErr, ActorRef, RpcReplyPort};
 use std::{sync::Arc, time::Duration};
 use tracing::{debug, error, info, warn};
@@ -57,7 +58,7 @@ pub enum CodexActorMessage {
     ///
     /// This is intended for 0-trust ingestion (e.g. an add-credentials endpoint). The actor will
     /// only persist+activate after a refresh succeeds and identity can be derived.
-    SubmitUntrustedSeeds(Vec<CodexRefreshTokenSeed>),
+    SubmitUntrustedSeeds(Vec<RefreshTokenSeed>),
 
     // Internal messages (sent by the actor itself / workers)
     /// Background credential processing has completed.
@@ -131,9 +132,9 @@ impl CodexActorHandle {
 
     /// Submit refresh tokens as 0-trust seeds. The actor will verify, then persist+activate.
     pub(crate) fn submit_refresh_tokens(&self, refresh_tokens: Vec<String>) {
-        let seeds: Vec<CodexRefreshTokenSeed> = refresh_tokens
+        let seeds: Vec<RefreshTokenSeed> = refresh_tokens
             .into_iter()
-            .filter_map(|t| CodexRefreshTokenSeed::new(&t))
+            .filter_map(|t| RefreshTokenSeed::new(&t))
             .collect();
 
         if seeds.is_empty() {
@@ -273,11 +274,11 @@ impl Actor for CodexActor {
             }
 
             CodexActorMessage::ActivateCredential { id, credential } => {
-                let account_id = credential.account_id().to_string();
+                let ident = credential.identifier().to_owned();
                 state
                     .manager
                     .add_credential(id, credential, state.provider_supported_mask);
-                info!("ID: {id}, Account: {account_id}, submitted and activated");
+                info!("ID: {id}, Account: {ident}, submitted and activated");
             }
         }
         Ok(())
@@ -294,10 +295,7 @@ impl CodexActor {
             return;
         }
 
-        let account_id = state
-            .manager
-            .get_credential(id)
-            .map_or_else(|| "-".to_string(), |r| r.account_id().to_string());
+        let ident = state.manager.get_identifier(id).to_owned();
 
         let disabled_names = crate::model_catalog::format_model_mask(model_mask);
 
@@ -313,12 +311,12 @@ impl CodexActor {
         if after_bits == 0 {
             warn!(
                 "Codex credential id={} account={} now supports no models after disabling {} (mask=0x{:016x}); caps 0x{:016x} -> 0x{:016x}",
-                id, account_id, disabled_names, model_mask, before_bits, after_bits
+                id, ident, disabled_names, model_mask, before_bits, after_bits
             );
         } else {
             info!(
                 "Codex credential id={} account={} disabled models {} (mask=0x{:016x}); caps 0x{:016x} -> 0x{:016x}",
-                id, account_id, disabled_names, model_mask, before_bits, after_bits
+                id, ident, disabled_names, model_mask, before_bits, after_bits
             );
         }
     }
@@ -414,7 +412,7 @@ impl CodexActor {
                 info!(
                     "ID: {}, Account: {}, invalid/expired reported.",
                     id,
-                    current.account_id()
+                    current.identifier()
                 );
                 jobs_to_send.push((id, current));
             }
@@ -443,30 +441,22 @@ impl CodexActor {
     }
 
     fn handle_report_baned(state: &mut CodexActorState, id: CredentialId) {
-        let account_id = state
-            .manager
-            .get_credential(id)
-            .map_or_else(|| "-".to_string(), |r| r.account_id().to_string());
+        let ident = state.manager.get_identifier(id).to_owned();
         let removed = state.manager.contains(id);
 
         state.manager.delete_credential(id);
 
-        info!("ID: {id}, Account: {account_id}, banned. removed_from_mem={removed}");
+        info!("ID: {id}, Account: {ident}, banned. removed_from_mem={removed}");
 
         let ops = state.ops.clone();
         tokio::spawn(async move {
             if let Err(e) = ops.set_status(id, false).await {
-                warn!(
-                    "ID: {id}, Account: {account_id}, ban report failed to update DB status: {e}"
-                );
+                warn!("ID: {id}, Account: {ident}, ban report failed to update DB status: {e}");
             }
         });
     }
 
-    fn handle_submit_untrusted_seeds(
-        state: &mut CodexActorState,
-        seeds: Vec<CodexRefreshTokenSeed>,
-    ) {
+    fn handle_submit_untrusted_seeds(state: &mut CodexActorState, seeds: Vec<RefreshTokenSeed>) {
         let count = seeds.len();
         info!(count, "Batch submit received, dispatching...");
         let processor_handle = state.processor_handle.clone();
@@ -531,7 +521,7 @@ impl CodexActor {
 
         match result {
             Ok(success) => {
-                let account_id = success.cred.account_id().to_string();
+                let ident = success.cred.identifier().to_owned();
                 let cred = success.cred;
                 match success.kind {
                     CredentialJobKind::Refresh(id) => {
@@ -557,7 +547,7 @@ impl CodexActor {
                         });
                     }
                     CredentialJobKind::IngestUntrusted | CredentialJobKind::IngestTrusted => {
-                        info!("Account: {account_id} Codex ingest success. Inserting to DB.");
+                        info!("Account: {ident} Codex ingest success. Inserting to DB.");
                         let ops = state.ops.clone();
                         let myself = myself.clone();
                         tokio::spawn(async move {
@@ -570,13 +560,10 @@ impl CodexActor {
                                             credential: cred,
                                         })
                                     {
-                                        warn!(
-                                            "Account: {account_id} ActivateCredential failed: {}",
-                                            e
-                                        );
+                                        warn!("Account: {ident} ActivateCredential failed: {}", e);
                                     }
                                 }
-                                Err(e) => warn!("Account: {account_id} DB upsert failed: {}", e),
+                                Err(e) => warn!("Account: {ident} DB upsert failed: {}", e),
                             }
                         });
                     }
@@ -585,8 +572,8 @@ impl CodexActor {
             Err(failed) => {
                 let job = failed.original_job;
                 let err = failed.error;
-                let account = job.cred.account_id().to_string();
-                warn!("CredentialJob failed for account {}: {}", account, err);
+                let ident = job.cred.identifier().to_owned();
+                warn!("CredentialJob failed for account {}: {}", ident, err);
 
                 match job.kind {
                     CredentialJobKind::Refresh(id) => {

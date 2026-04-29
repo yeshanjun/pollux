@@ -1,6 +1,7 @@
 use crate::config::AntigravityResolvedConfig;
 use crate::db::{AntigravityCreate, AntigravityPatch};
 use crate::error::{OauthError, PolluxError};
+use crate::providers::RefreshTokenSeed;
 use crate::providers::antigravity::client::oauth::{
     endpoints::AntigravityOauthEndpoints,
     ops::{AntigravityOauthOps, LoadCodeAssistResponse},
@@ -18,25 +19,6 @@ use tokio::time::sleep;
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::{debug, info, warn};
 
-#[derive(Debug, Clone)]
-pub(crate) struct AntigravityRefreshTokenSeed {
-    refresh_token: String,
-}
-
-impl AntigravityRefreshTokenSeed {
-    pub fn new(refresh_token: &str) -> Option<Self> {
-        let refresh_token = refresh_token.trim().to_string();
-        if refresh_token.is_empty() {
-            return None;
-        }
-        Some(Self { refresh_token })
-    }
-
-    pub fn refresh_token(&self) -> &str {
-        self.refresh_token.as_str()
-    }
-}
-
 #[derive(Debug)]
 pub(crate) enum RefreshOutcome {
     /// Refresh an existing DB credential (`project_id` must already exist).
@@ -48,7 +30,7 @@ pub(crate) enum RefreshOutcome {
 
     /// Refresh a 0-trust seed and discover a `project_id`.
     OnboardSeed {
-        seed: AntigravityRefreshTokenSeed,
+        seed: RefreshTokenSeed,
         result: Result<AntigravityCreate, PolluxError>,
     },
 }
@@ -56,7 +38,7 @@ pub(crate) enum RefreshOutcome {
 #[derive(Debug)]
 enum RefreshTask {
     RefreshCredential { id: u64, refresh_token: String },
-    OnboardSeed { seed: AntigravityRefreshTokenSeed },
+    OnboardSeed { seed: RefreshTokenSeed },
 }
 
 impl RefreshTask {
@@ -111,7 +93,7 @@ impl AntigravityRefresherHandle {
 
     pub(crate) async fn submit_onboard_seed(
         &self,
-        seed: AntigravityRefreshTokenSeed,
+        seed: RefreshTokenSeed,
     ) -> Result<(), PolluxError> {
         self.job_tx
             .send(RefreshTask::OnboardSeed { seed })
@@ -231,7 +213,7 @@ async fn refresh_existing(
 async fn refresh_and_discover(
     cfg: Arc<AntigravityResolvedConfig>,
     http_client: reqwest::Client,
-    seed: &AntigravityRefreshTokenSeed,
+    seed: &RefreshTokenSeed,
 ) -> Result<AntigravityCreate, PolluxError> {
     let token = AntigravityOauthEndpoints::refresh_access_token(
         &cfg,

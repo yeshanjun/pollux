@@ -1,6 +1,6 @@
 use crate::db::{CodexCreate, DbCodexResource};
 use crate::error::PolluxError;
-use crate::providers::codex::CodexRefreshTokenSeed;
+use crate::providers::RefreshTokenSeed;
 use crate::providers::codex::oauth::OauthTokenResponse;
 use crate::providers::manifest::{CodexLease, CodexProfile};
 use crate::providers::traits::scheduler::{CooldownScope, CredentialId, Schedulable};
@@ -90,6 +90,8 @@ impl CodexResource {
     /// Only updates fields present in the JSON; others remain unchanged.
     #[allow(dead_code)]
     pub fn update_credential(&mut self, payload: impl Serialize) -> Result<(), PolluxError> {
+        use crate::providers::credential_update::{apply_expiry, parse_patch, set_opt, set_plain};
+
         #[derive(Debug, Default, Deserialize)]
         struct CredentialPatch {
             email: Option<String>,
@@ -102,36 +104,15 @@ impl CodexResource {
             chatgpt_plan_type: Option<String>,
         }
 
-        let value = serde_json::to_value(payload)?;
-        let patch: CredentialPatch = serde_json::from_value(value)?;
+        let patch: CredentialPatch = parse_patch(payload)?;
 
-        macro_rules! set_plain {
-            ($field:ident) => {
-                if let Some(v) = patch.$field {
-                    self.$field = v;
-                }
-            };
-        }
-        macro_rules! set_opt {
-            ($field:ident) => {
-                if let Some(v) = patch.$field {
-                    self.$field = Some(v);
-                }
-            };
-        }
-
-        set_opt!(email);
-        set_plain!(account_id);
-        set_plain!(sub);
-        set_plain!(refresh_token);
-        set_plain!(access_token);
-        set_opt!(chatgpt_plan_type);
-
-        if let Some(secs) = patch.expires_in {
-            self.expiry = Utc::now() + Duration::seconds(secs);
-        } else if let Some(dt) = patch.expiry {
-            self.expiry = dt;
-        }
+        set_opt(&mut self.email, patch.email);
+        set_plain(&mut self.account_id, patch.account_id);
+        set_plain(&mut self.sub, patch.sub);
+        set_plain(&mut self.refresh_token, patch.refresh_token);
+        set_plain(&mut self.access_token, patch.access_token);
+        set_opt(&mut self.chatgpt_plan_type, patch.chatgpt_plan_type);
+        apply_expiry(&mut self.expiry, patch.expires_in, patch.expiry);
 
         debug!(
             "account_id={}, sub={}, Codex resource updated successfully",
@@ -151,7 +132,7 @@ impl CodexResource {
 
     pub(super) fn try_from_oauth_token_response(
         token_response: &OauthTokenResponse,
-        refresh_seed: Option<&CodexRefreshTokenSeed>,
+        refresh_seed: Option<&RefreshTokenSeed>,
     ) -> Result<Self, PolluxError> {
         // Validate presence of `access_token` and `refresh_token`, trimming whitespace and rejecting empty strings.
         let access_token = Some(token_response.access_token().secret().trim())
@@ -172,7 +153,7 @@ impl CodexResource {
             .refresh_token()
             .map(|t| t.secret().trim())
             .filter(|&s| !s.is_empty())
-            .or_else(|| refresh_seed.as_ref().map(|s| s.refresh_token()))
+            .or_else(|| refresh_seed.map(RefreshTokenSeed::refresh_token))
             .map(ToString::to_string)
             .ok_or_else(|| {
                 PolluxError::UnexpectedError("Missing refresh_token in OAuth token response".into())
@@ -205,6 +186,10 @@ impl CodexResource {
 impl Schedulable for CodexResource {
     type Lease = CodexLease;
     const COOLDOWN_GRANULARITY: CooldownScope = CooldownScope::PerCredential;
+
+    fn identifier(&self) -> &str {
+        &self.account_id
+    }
 
     fn is_expired(&self) -> bool {
         self.is_expired()

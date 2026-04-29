@@ -4,12 +4,11 @@ use crate::db::{AntigravityCreate, AntigravityPatch};
 use crate::error::{OauthError, PolluxError};
 use crate::model_catalog::MODEL_REGISTRY;
 use crate::oauth_utils::OauthTokenResponse;
+use crate::providers::RefreshTokenSeed;
 use crate::providers::antigravity::resource::AntigravityResource;
-use crate::providers::antigravity::workers::refresher::{
-    AntigravityRefreshTokenSeed, RefreshOutcome,
-};
+use crate::providers::antigravity::workers::refresher::RefreshOutcome;
 use crate::providers::manifest::AntigravityLease;
-use crate::providers::traits::scheduler::{CredentialId, ResourceScheduler};
+use crate::providers::traits::scheduler::{CredentialId, ResourceScheduler, Schedulable};
 use oauth2::TokenResponse;
 use ractor::{Actor, ActorProcessingErr, ActorRef, RpcReplyPort};
 use std::{sync::Arc, time::Duration};
@@ -41,7 +40,7 @@ pub enum AntigravityActorMessage {
     SubmitTrustedOauth(OauthTokenResponse),
 
     /// Submit refresh tokens as 0-trust seeds. The actor will refresh, onboard, then persist+activate.
-    SubmitUntrustedSeeds(Vec<AntigravityRefreshTokenSeed>),
+    SubmitUntrustedSeeds(Vec<RefreshTokenSeed>),
 
     // Internal messages (sent by the actor itself)
     /// Token refresh/onboarding has completed; update stored credential and re-enqueue if ok.
@@ -110,9 +109,9 @@ impl AntigravityActorHandle {
 
     /// Submit refresh tokens as 0-trust seeds.
     pub(crate) fn submit_refresh_tokens(&self, refresh_tokens: Vec<String>) {
-        let seeds: Vec<AntigravityRefreshTokenSeed> = refresh_tokens
+        let seeds: Vec<RefreshTokenSeed> = refresh_tokens
             .into_iter()
-            .filter_map(|t| AntigravityRefreshTokenSeed::new(&t))
+            .filter_map(|t| RefreshTokenSeed::new(&t))
             .collect();
 
         if seeds.is_empty() {
@@ -237,11 +236,11 @@ impl Actor for AntigravityActor {
                 Self::handle_refresh_complete(&myself, state, outcome);
             }
             AntigravityActorMessage::ActivateCredential { id, credential } => {
-                let project = credential.project_id().to_string();
+                let ident = credential.identifier().to_owned();
                 state
                     .manager
                     .add_credential(id, credential, state.provider_supported_mask);
-                info!(id, project, "Antigravity credential activated");
+                info!(id, project = %ident, "Antigravity credential activated");
             }
         }
         Ok(())
@@ -258,10 +257,7 @@ impl AntigravityActor {
             return;
         }
 
-        let project_id = state
-            .manager
-            .get_credential(id)
-            .map_or_else(|| "-".to_string(), |r| r.project_id().to_string());
+        let ident = state.manager.get_identifier(id).to_owned();
 
         let Some((before_bits, after_bits)) = state.manager.mark_model_unsupported(id, model_mask)
         else {
@@ -275,12 +271,12 @@ impl AntigravityActor {
         if after_bits == 0 {
             warn!(
                 "Antigravity credential id={} project={} now supports no models after disabling {} (mask=0x{:016x}); caps 0x{:016x} -> 0x{:016x}",
-                id, project_id, disabled_names, model_mask, before_bits, after_bits
+                id, ident, disabled_names, model_mask, before_bits, after_bits
             );
         } else {
             info!(
                 "Antigravity credential id={} project={} disabled models {} (mask=0x{:016x}); caps 0x{:016x} -> 0x{:016x}",
-                id, project_id, disabled_names, model_mask, before_bits, after_bits
+                id, ident, disabled_names, model_mask, before_bits, after_bits
             );
         }
     }
@@ -388,10 +384,7 @@ impl AntigravityActor {
     }
 
     fn handle_report_baned(state: &mut AntigravityActorState, id: CredentialId) {
-        let project = state
-            .manager
-            .get_credential(id)
-            .map_or_else(|| "-".to_string(), |r| r.project_id().to_string());
+        let ident = state.manager.get_identifier(id).to_owned();
         let removed = state.manager.contains(id);
         state.manager.delete_credential(id);
 
@@ -402,7 +395,7 @@ impl AntigravityActor {
             }
         });
 
-        info!(id, project, removed_from_mem = removed, "Credential banned");
+        info!(id, project = %ident, removed_from_mem = removed, "Credential banned");
     }
 
     fn handle_submit_trusted_oauth(
@@ -414,7 +407,7 @@ impl AntigravityActor {
             .map(|t| t.secret().trim().to_string())
             .unwrap_or_default();
 
-        let Some(seed) = AntigravityRefreshTokenSeed::new(&refresh_token) else {
+        let Some(seed) = RefreshTokenSeed::new(&refresh_token) else {
             warn!("Trusted OAuth submit ignored: missing refresh_token");
             return;
         };
@@ -430,7 +423,7 @@ impl AntigravityActor {
 
     fn handle_submit_untrusted_seeds(
         state: &mut AntigravityActorState,
-        seeds: Vec<AntigravityRefreshTokenSeed>,
+        seeds: Vec<RefreshTokenSeed>,
     ) {
         let count = seeds.len();
         info!(

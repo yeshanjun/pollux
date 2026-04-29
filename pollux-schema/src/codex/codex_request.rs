@@ -49,7 +49,7 @@ impl From<OpenaiRequestBody> for CodexRequestBody {
     fn from(body: OpenaiRequestBody) -> Self {
         let input = match body.input {
             Some(OpenaiInput::Items(items)) => items,
-            Some(OpenaiInput::Null(())) | None => Vec::new(),
+            None => Vec::new(),
         };
         let (system_msgs, clean_input): (Vec<_>, Vec<_>) = input
             .into_iter()
@@ -109,7 +109,7 @@ fn extract_content_from_messages(messages: &[OpenaiInputItem]) -> String {
                     })
                     .collect::<Vec<&str>>()
                     .join("\n"),
-                Some(OpenaiInputContent::Null(())) | None => String::new(),
+                None => String::new(),
             };
             if text.trim().is_empty() {
                 None
@@ -238,6 +238,19 @@ mod tests {
     }
 
     #[test]
+    fn codex_request_body_treats_null_input_as_empty_input() {
+        let body: OpenaiRequestBody = serde_json::from_value(json!({
+            "model": "gpt-4o-mini",
+            "input": null,
+        }))
+        .expect("failed to deserialize");
+
+        let codex: CodexRequestBody = body.into();
+        let out = serde_json::to_value(&codex).expect("failed to serialize");
+        assert_eq!(out.get("input"), Some(&json!([])));
+    }
+
+    #[test]
     fn codex_request_body_forwards_include_to_upstream_payload() {
         let body: OpenaiRequestBody = serde_json::from_value(json!({
             "model": "gpt-4o-mini",
@@ -316,7 +329,7 @@ mod tests {
             .expect("missing input[0]");
 
         assert_eq!(first.get("role"), Some(&json!("assistant")));
-        assert_eq!(first.get("content"), Some(&Value::Null));
+        assert_eq!(first.get("content"), None);
         assert_eq!(first.get("encrypted_content"), Some(&json!(enc)));
     }
 }

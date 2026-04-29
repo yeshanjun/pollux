@@ -1,6 +1,6 @@
 use crate::db::{CodexCreate, DbCodexResource};
 use crate::error::PolluxError;
-use crate::providers::codex::CodexRefreshTokenSeed;
+use crate::providers::RefreshTokenSeed;
 use crate::providers::codex::oauth::OauthTokenResponse;
 use crate::providers::manifest::{CodexLease, CodexProfile};
 use crate::providers::traits::scheduler::{CooldownScope, CredentialId, Schedulable};
@@ -151,7 +151,7 @@ impl CodexResource {
 
     pub(super) fn try_from_oauth_token_response(
         token_response: &OauthTokenResponse,
-        refresh_seed: Option<&CodexRefreshTokenSeed>,
+        refresh_seed: Option<&RefreshTokenSeed>,
     ) -> Result<Self, PolluxError> {
         // Validate presence of `access_token` and `refresh_token`, trimming whitespace and rejecting empty strings.
         let access_token = Some(token_response.access_token().secret().trim())
@@ -172,7 +172,7 @@ impl CodexResource {
             .refresh_token()
             .map(|t| t.secret().trim())
             .filter(|&s| !s.is_empty())
-            .or_else(|| refresh_seed.as_ref().map(|s| s.refresh_token()))
+            .or_else(|| refresh_seed.map(RefreshTokenSeed::refresh_token))
             .map(ToString::to_string)
             .ok_or_else(|| {
                 PolluxError::UnexpectedError("Missing refresh_token in OAuth token response".into())

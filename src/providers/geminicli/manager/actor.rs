@@ -10,6 +10,7 @@ use crate::providers::geminicli::workers::{
     CredentialJob, CredentialJobKind, CredentialProcessError, CredentialProcessResult,
     GeminiCliOauthWorkerHandle,
 };
+use crate::providers::RefreshTokenSeed;
 use crate::providers::geminicli::{SUPPORTED_MODEL_MASK, SUPPORTED_MODEL_NAMES};
 use crate::providers::manifest::{GeminiCliLease, GeminiCliProfile};
 use crate::providers::traits::scheduler::{CredentialId, ResourceScheduler, Schedulable};
@@ -17,21 +18,6 @@ use ractor::{Actor, ActorProcessingErr, ActorRef, RpcReplyPort};
 use serde_json::json;
 use std::{sync::Arc, time::Duration};
 use tracing::{debug, error, info, warn};
-
-#[derive(Debug, Clone)]
-pub(crate) struct GeminiCliRefreshTokenSeed {
-    refresh_token: String,
-}
-
-impl GeminiCliRefreshTokenSeed {
-    pub fn new(refresh_token: &str) -> Option<Self> {
-        let refresh_token = refresh_token.trim().to_string();
-        if refresh_token.is_empty() {
-            return None;
-        }
-        Some(Self { refresh_token })
-    }
-}
 
 /// Public messages handled by the Gemini CLI actor.
 pub enum GeminiCliActorMessage {
@@ -55,7 +41,7 @@ pub enum GeminiCliActorMessage {
     /// Submit a trusted OAuth token response to the actor for onboarding + persistence.
     SubmitTrustedOauth(GoogleTokenResponse),
     /// Submit refresh tokens as 0-trust seeds. The actor will refresh, onboard, then persist+activate.
-    SubmitUntrustedSeeds(Vec<GeminiCliRefreshTokenSeed>),
+    SubmitUntrustedSeeds(Vec<RefreshTokenSeed>),
 
     // Internal messages (sent by the actor itself)
     /// Token refresh has completed; update stored credential and re-enqueue if ok.
@@ -128,9 +114,9 @@ impl GeminiCliActorHandle {
 
     /// Submit refresh tokens as 0-trust seeds. The actor will refresh, onboard, then persist+activate.
     pub(crate) fn submit_refresh_tokens(&self, refresh_tokens: Vec<String>) {
-        let seeds: Vec<GeminiCliRefreshTokenSeed> = refresh_tokens
+        let seeds: Vec<RefreshTokenSeed> = refresh_tokens
             .into_iter()
-            .filter_map(|t| GeminiCliRefreshTokenSeed::new(&t))
+            .filter_map(|t| RefreshTokenSeed::new(&t))
             .collect();
 
         if seeds.is_empty() {
@@ -511,7 +497,7 @@ impl GeminiCliActor {
 
     fn handle_submit_untrusted_seeds(
         state: &mut GeminiCliActorState,
-        seeds: Vec<GeminiCliRefreshTokenSeed>,
+        seeds: Vec<RefreshTokenSeed>,
     ) {
         let count = seeds.len();
         info!(
@@ -523,7 +509,7 @@ impl GeminiCliActor {
             for seed in seeds {
                 let mut cred = GeminiCliResource::default();
                 if let Err(e) =
-                    cred.update_credential(json!({ "refresh_token": seed.refresh_token }))
+                    cred.update_credential(json!({ "refresh_token": seed.refresh_token() }))
                 {
                     warn!("0-trust seed discarded: JSON error: {e}");
                     continue;

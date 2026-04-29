@@ -4,10 +4,9 @@ use crate::db::{AntigravityCreate, AntigravityPatch};
 use crate::error::{OauthError, PolluxError};
 use crate::model_catalog::MODEL_REGISTRY;
 use crate::oauth_utils::OauthTokenResponse;
+use crate::providers::RefreshTokenSeed;
 use crate::providers::antigravity::resource::AntigravityResource;
-use crate::providers::antigravity::workers::refresher::{
-    AntigravityRefreshTokenSeed, RefreshOutcome,
-};
+use crate::providers::antigravity::workers::refresher::RefreshOutcome;
 use crate::providers::manifest::AntigravityLease;
 use crate::providers::traits::scheduler::{CredentialId, ResourceScheduler, Schedulable};
 use oauth2::TokenResponse;
@@ -41,7 +40,7 @@ pub enum AntigravityActorMessage {
     SubmitTrustedOauth(OauthTokenResponse),
 
     /// Submit refresh tokens as 0-trust seeds. The actor will refresh, onboard, then persist+activate.
-    SubmitUntrustedSeeds(Vec<AntigravityRefreshTokenSeed>),
+    SubmitUntrustedSeeds(Vec<RefreshTokenSeed>),
 
     // Internal messages (sent by the actor itself)
     /// Token refresh/onboarding has completed; update stored credential and re-enqueue if ok.
@@ -110,9 +109,9 @@ impl AntigravityActorHandle {
 
     /// Submit refresh tokens as 0-trust seeds.
     pub(crate) fn submit_refresh_tokens(&self, refresh_tokens: Vec<String>) {
-        let seeds: Vec<AntigravityRefreshTokenSeed> = refresh_tokens
+        let seeds: Vec<RefreshTokenSeed> = refresh_tokens
             .into_iter()
-            .filter_map(|t| AntigravityRefreshTokenSeed::new(&t))
+            .filter_map(|t| RefreshTokenSeed::new(&t))
             .collect();
 
         if seeds.is_empty() {
@@ -408,7 +407,7 @@ impl AntigravityActor {
             .map(|t| t.secret().trim().to_string())
             .unwrap_or_default();
 
-        let Some(seed) = AntigravityRefreshTokenSeed::new(&refresh_token) else {
+        let Some(seed) = RefreshTokenSeed::new(&refresh_token) else {
             warn!("Trusted OAuth submit ignored: missing refresh_token");
             return;
         };
@@ -424,7 +423,7 @@ impl AntigravityActor {
 
     fn handle_submit_untrusted_seeds(
         state: &mut AntigravityActorState,
-        seeds: Vec<AntigravityRefreshTokenSeed>,
+        seeds: Vec<RefreshTokenSeed>,
     ) {
         let count = seeds.len();
         info!(

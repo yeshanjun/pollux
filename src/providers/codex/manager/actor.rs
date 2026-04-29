@@ -3,9 +3,10 @@ use crate::config::CodexResolvedConfig;
 use crate::db::CodexPatch;
 use crate::error::{OauthError, PolluxError};
 use crate::model_catalog::MODEL_REGISTRY;
+use crate::providers::RefreshTokenSeed;
 use crate::providers::codex::resource::CodexResource;
 use crate::providers::codex::{
-    CodexRefreshTokenSeed, SUPPORTED_MODEL_MASK, SUPPORTED_MODEL_NAMES, oauth::OauthTokenResponse,
+    SUPPORTED_MODEL_MASK, SUPPORTED_MODEL_NAMES, oauth::OauthTokenResponse,
 };
 use crate::providers::manifest::CodexLease;
 use crate::providers::traits::scheduler::{CredentialId, ResourceScheduler, Schedulable};
@@ -57,7 +58,7 @@ pub enum CodexActorMessage {
     ///
     /// This is intended for 0-trust ingestion (e.g. an add-credentials endpoint). The actor will
     /// only persist+activate after a refresh succeeds and identity can be derived.
-    SubmitUntrustedSeeds(Vec<CodexRefreshTokenSeed>),
+    SubmitUntrustedSeeds(Vec<RefreshTokenSeed>),
 
     // Internal messages (sent by the actor itself / workers)
     /// Background credential processing has completed.
@@ -131,9 +132,9 @@ impl CodexActorHandle {
 
     /// Submit refresh tokens as 0-trust seeds. The actor will verify, then persist+activate.
     pub(crate) fn submit_refresh_tokens(&self, refresh_tokens: Vec<String>) {
-        let seeds: Vec<CodexRefreshTokenSeed> = refresh_tokens
+        let seeds: Vec<RefreshTokenSeed> = refresh_tokens
             .into_iter()
-            .filter_map(|t| CodexRefreshTokenSeed::new(&t))
+            .filter_map(|t| RefreshTokenSeed::new(&t))
             .collect();
 
         if seeds.is_empty() {
@@ -457,7 +458,7 @@ impl CodexActor {
 
     fn handle_submit_untrusted_seeds(
         state: &mut CodexActorState,
-        seeds: Vec<CodexRefreshTokenSeed>,
+        seeds: Vec<RefreshTokenSeed>,
     ) {
         let count = seeds.len();
         info!(count, "Batch submit received, dispatching...");

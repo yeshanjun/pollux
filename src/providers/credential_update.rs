@@ -47,8 +47,8 @@ pub(crate) fn set_plain<T>(target: &mut T, source: Option<T>) {
 /// Overwrite an `Option` field when the patch supplies a value. A `None` in
 /// the patch is treated as "field absent", not "clear the field".
 pub(crate) fn set_opt<T>(target: &mut Option<T>, source: Option<T>) {
-    if source.is_some() {
-        *target = source;
+    if let Some(value) = source {
+        *target = Some(value);
     }
 }
 

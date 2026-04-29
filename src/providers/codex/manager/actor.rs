@@ -456,10 +456,7 @@ impl CodexActor {
         });
     }
 
-    fn handle_submit_untrusted_seeds(
-        state: &mut CodexActorState,
-        seeds: Vec<RefreshTokenSeed>,
-    ) {
+    fn handle_submit_untrusted_seeds(state: &mut CodexActorState, seeds: Vec<RefreshTokenSeed>) {
         let count = seeds.len();
         info!(count, "Batch submit received, dispatching...");
         let processor_handle = state.processor_handle.clone();

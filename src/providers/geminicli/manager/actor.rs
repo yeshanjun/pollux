@@ -3,6 +3,7 @@ use crate::config::GeminiCliResolvedConfig;
 use crate::db::GeminiCliPatch;
 use crate::error::{OauthError, PolluxError};
 use crate::model_catalog::MODEL_REGISTRY;
+use crate::providers::RefreshTokenSeed;
 use crate::providers::geminicli::client::oauth::endpoints::GoogleTokenResponse;
 use crate::providers::geminicli::client::oauth::utils::attach_email_from_id_token;
 use crate::providers::geminicli::resource::GeminiCliResource;
@@ -10,7 +11,6 @@ use crate::providers::geminicli::workers::{
     CredentialJob, CredentialJobKind, CredentialProcessError, CredentialProcessResult,
     GeminiCliOauthWorkerHandle,
 };
-use crate::providers::RefreshTokenSeed;
 use crate::providers::geminicli::{SUPPORTED_MODEL_MASK, SUPPORTED_MODEL_NAMES};
 use crate::providers::manifest::{GeminiCliLease, GeminiCliProfile};
 use crate::providers::traits::scheduler::{CredentialId, ResourceScheduler, Schedulable};

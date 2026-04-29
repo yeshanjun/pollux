@@ -75,7 +75,7 @@ impl GeminiCliResource {
     ///   and full credential JSON (`project_id`, `expiry`, etc.).
     /// - Only updates fields present in the JSON; others remain unchanged.
     pub fn update_credential(&mut self, payload: impl Serialize) -> Result<(), PolluxError> {
-        use crate::providers::credential_patch::{apply_expiry, parse_patch, set_opt, set_plain};
+        use crate::providers::credential_update::{apply_expiry, parse_patch, set_opt, set_plain};
 
         #[derive(Debug, Default, Deserialize)]
         struct CredentialPatch {

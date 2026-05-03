@@ -10,7 +10,7 @@ crate::impl_string_or_array_opt_deserializer!(
     OpenaiInput::Items,
     |s: String| {
         OpenaiInput::Items(vec![OpenaiInputItem {
-            role: Some("user".to_string()),
+            role: Some(OpenaiRole::User),
             content: Some(OpenaiInputContent::Parts(vec![serde_json::json!({
                 "type": "input_text",
                 "text": s
@@ -125,8 +125,8 @@ pub struct OpenaiInputItem {
     ///
     /// We keep `role` optional so the proxy can transparently passthrough non-message
     /// input items (or future schema extensions) rather than rejecting them.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub role: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<OpenaiRole>,
 
     /// OpenAI docs: `string | array`.
     ///
@@ -145,6 +145,23 @@ pub struct OpenaiInputItem {
     /// `encrypted_content`) without having to update our struct immediately.
     #[serde(default, flatten)]
     pub extra: BTreeMap<String, Value>,
+}
+
+/// Role for an OpenAI Responses message input item.
+///
+/// Requests with unknown roles are rejected at the schema boundary while
+/// role-less non-message items can still pass through via `OpenaiInputItem`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OpenaiRole {
+    /// End-user message content.
+    User,
+    /// Previous model output included in conversation history.
+    Assistant,
+    /// System-level instructions.
+    System,
+    /// Developer-level instructions.
+    Developer,
 }
 
 /// Normalized OpenAI Responses input.
@@ -179,7 +196,7 @@ mod tests {
         assert_eq!(
             body.input,
             Some(OpenaiInput::Items(vec![OpenaiInputItem {
-                role: Some("user".to_string()),
+                role: Some(OpenaiRole::User),
                 content: Some(OpenaiInputContent::Parts(vec![json!({
                     "type": "input_text",
                     "text": "hello"
@@ -204,7 +221,7 @@ mod tests {
         assert_eq!(
             body.input,
             Some(OpenaiInput::Items(vec![OpenaiInputItem {
-                role: Some("user".to_string()),
+                role: Some(OpenaiRole::User),
                 content: Some(OpenaiInputContent::Parts(vec![json!({
                     "type": "input_text",
                     "text": "hi"
@@ -232,7 +249,7 @@ mod tests {
         assert_eq!(
             body.input,
             Some(OpenaiInput::Items(vec![OpenaiInputItem {
-                role: Some("user".to_string()),
+                role: Some(OpenaiRole::User),
                 content: Some(OpenaiInputContent::Parts(vec![json!({
                     "type": "input_text",
                     "text": "hi"
@@ -240,6 +257,20 @@ mod tests {
                 extra: BTreeMap::new(),
             }]))
         );
+    }
+
+    #[test]
+    fn openai_request_body_rejects_unknown_message_role() {
+        let err = serde_json::from_value::<OpenaiRequestBody>(json!({
+            "model": "gpt-4o-mini",
+            "input": [{
+                "role": "tool",
+                "content": "hi",
+            }],
+        }))
+        .expect_err("expected deserialization to fail");
+
+        assert_eq!(err.classify(), serde_json::error::Category::Data);
     }
 
     #[test]
@@ -393,7 +424,7 @@ mod tests {
         assert_eq!(
             body.input,
             Some(OpenaiInput::Items(vec![OpenaiInputItem {
-                role: Some("user".to_string()),
+                role: Some(OpenaiRole::User),
                 content: Some(OpenaiInputContent::Parts(vec![json!({
                     "type": "input_text",
                     "text": "hi"

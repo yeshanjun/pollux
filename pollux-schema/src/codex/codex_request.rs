@@ -3,8 +3,13 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 
 use crate::openai::{
-    OpenaiInput, OpenaiInputContent, OpenaiInputItem, OpenaiRequestBody, Reasoning,
+    OpenaiInput, OpenaiInputContent, OpenaiInputItem, OpenaiRequestBody, OpenaiRole, Reasoning,
 };
+
+const CONTENT_PART_TEXT_FIELD: &str = "text";
+const CONTENT_PART_TYPE_FIELD: &str = "type";
+const INPUT_TEXT_PART_TYPE: &str = "input_text";
+const OUTPUT_TEXT_PART_TYPE: &str = "output_text";
 
 /// Codex upstream request body.
 ///
@@ -51,11 +56,14 @@ impl From<OpenaiRequestBody> for CodexRequestBody {
             Some(OpenaiInput::Items(items)) => items,
             None => Vec::new(),
         };
-        let (system_msgs, clean_input): (Vec<_>, Vec<_>) = input
+        let (system_msgs, mut clean_input): (Vec<_>, Vec<_>) = input
             .into_iter()
-            .partition(|m| m.role.as_deref() == Some("system"));
+            .partition(|m| m.role == Some(OpenaiRole::System));
 
         let extracted_system_text = extract_content_from_messages(&system_msgs);
+        for item in &mut clean_input {
+            item.normalize_for_codex_history();
+        }
 
         let instructions = [body.instructions, Some(extracted_system_text)]
             .into_iter()
@@ -104,7 +112,7 @@ fn extract_content_from_messages(messages: &[OpenaiInputItem]) -> String {
                     .iter()
                     .filter_map(|val| match val {
                         Value::String(s) => Some(s.as_str()),
-                        Value::Object(o) => o.get("text").and_then(|v| v.as_str()),
+                        Value::Object(o) => o.get(CONTENT_PART_TEXT_FIELD).and_then(|v| v.as_str()),
                         _ => None,
                     })
                     .collect::<Vec<&str>>()
@@ -119,6 +127,58 @@ fn extract_content_from_messages(messages: &[OpenaiInputItem]) -> String {
         })
         .collect::<Vec<String>>()
         .join("\n\n")
+}
+
+impl OpenaiInputItem {
+    fn normalize_for_codex_history(&mut self) {
+        if self.role != Some(OpenaiRole::Assistant) {
+            return;
+        }
+
+        let Some(OpenaiInputContent::Parts(parts)) = self.content.as_mut() else {
+            return;
+        };
+
+        for part in parts {
+            normalize_assistant_content_part_for_codex(part);
+        }
+    }
+}
+
+fn normalize_assistant_content_part_for_codex(part: &mut Value) {
+    match part {
+        Value::String(text) => {
+            *part = output_text_part(std::mem::take(text));
+        }
+        Value::Object(object) if is_text_part_for_codex_history(object) => {
+            object.insert(
+                CONTENT_PART_TYPE_FIELD.to_string(),
+                Value::String(OUTPUT_TEXT_PART_TYPE.to_string()),
+            );
+        }
+        _ => {}
+    }
+}
+
+fn is_text_part_for_codex_history(object: &serde_json::Map<String, Value>) -> bool {
+    match object.get(CONTENT_PART_TYPE_FIELD).and_then(Value::as_str) {
+        Some(INPUT_TEXT_PART_TYPE | OUTPUT_TEXT_PART_TYPE) => true,
+        Some(_) => false,
+        None => object
+            .get(CONTENT_PART_TEXT_FIELD)
+            .and_then(Value::as_str)
+            .is_some(),
+    }
+}
+
+fn output_text_part(text: String) -> Value {
+    let mut object = serde_json::Map::new();
+    object.insert(
+        CONTENT_PART_TYPE_FIELD.to_string(),
+        Value::String(OUTPUT_TEXT_PART_TYPE.to_string()),
+    );
+    object.insert(CONTENT_PART_TEXT_FIELD.to_string(), Value::String(text));
+    Value::Object(object)
 }
 
 #[cfg(test)]
@@ -158,7 +218,7 @@ mod tests {
 
         let codex: CodexRequestBody = body.into();
         assert_eq!(codex.input.len(), 1);
-        assert_eq!(codex.input[0].role, Some("user".to_string()));
+        assert_eq!(codex.input[0].role, Some(OpenaiRole::User));
         let out = serde_json::to_value(&codex).expect("failed to serialize");
         assert_eq!(out.get("instructions"), Some(&json!("system-instructions")));
         assert_eq!(
@@ -189,7 +249,7 @@ mod tests {
 
         let codex: CodexRequestBody = body.into();
         assert_eq!(codex.input.len(), 1);
-        assert_eq!(codex.input[0].role, Some("user".to_string()));
+        assert_eq!(codex.input[0].role, Some(OpenaiRole::User));
         let out = serde_json::to_value(&codex).expect("failed to serialize");
         assert_eq!(
             out.get("instructions"),
@@ -215,12 +275,109 @@ mod tests {
 
         let codex: CodexRequestBody = body.into();
         assert_eq!(codex.input.len(), 2);
-        assert_eq!(codex.input[0].role, Some("user".to_string()));
-        assert_eq!(codex.input[1].role, Some("user".to_string()));
+        assert_eq!(codex.input[0].role, Some(OpenaiRole::User));
+        assert_eq!(codex.input[1].role, Some(OpenaiRole::User));
         let out = serde_json::to_value(&codex).expect("failed to serialize");
         assert_eq!(
             out.get("instructions"),
             Some(&json!("sys-a\n\nsys-b1\nsys-b2"))
+        );
+    }
+
+    #[test]
+    fn codex_request_body_uses_output_text_for_assistant_messages() {
+        let body: OpenaiRequestBody = serde_json::from_value(json!({
+            "model": "gpt-4o-mini",
+            "input": [{
+                "role": "assistant",
+                "content": "previous answer",
+                "phase": "final_answer"
+            }],
+        }))
+        .expect("failed to deserialize");
+
+        let codex: CodexRequestBody = body.into();
+        let out = serde_json::to_value(&codex).expect("failed to serialize");
+        assert_eq!(
+            out.pointer("/input/0/content/0"),
+            Some(&json!({
+                "type": "output_text",
+                "text": "previous answer"
+            }))
+        );
+        assert_eq!(out.pointer("/input/0/phase"), Some(&json!("final_answer")));
+    }
+
+    #[test]
+    fn normalizes_assistant_text_parts_for_codex_history() {
+        let body: OpenaiRequestBody = serde_json::from_value(json!({
+            "model": "gpt-4o-mini",
+            "input": [{
+                "role": "assistant",
+                "content": [
+                    {"type": "input_text", "text": "from input"},
+                    {"type": "output_text", "text": "already output"},
+                    "bare text",
+                    {"text": "typeless text"},
+                    {"type": "input_image", "image_url": "https://example.test/a.png"}
+                ],
+            }],
+        }))
+        .expect("failed to deserialize");
+
+        let codex: CodexRequestBody = body.into();
+        let out = serde_json::to_value(&codex).expect("failed to serialize");
+        assert_eq!(
+            out.pointer("/input/0/content/0"),
+            Some(&json!({"type": "output_text", "text": "from input"}))
+        );
+        assert_eq!(
+            out.pointer("/input/0/content/1"),
+            Some(&json!({"type": "output_text", "text": "already output"}))
+        );
+        assert_eq!(
+            out.pointer("/input/0/content/2"),
+            Some(&json!({"type": "output_text", "text": "bare text"}))
+        );
+        assert_eq!(
+            out.pointer("/input/0/content/3"),
+            Some(&json!({"type": "output_text", "text": "typeless text"}))
+        );
+        assert_eq!(
+            out.pointer("/input/0/content/4"),
+            Some(&json!({
+                "type": "input_image",
+                "image_url": "https://example.test/a.png"
+            }))
+        );
+    }
+
+    #[test]
+    fn codex_request_body_preserves_text_type_for_non_assistant_messages() {
+        let body: OpenaiRequestBody = serde_json::from_value(json!({
+            "model": "gpt-4o-mini",
+            "input": [
+                {
+                    "role": "user",
+                    "content": [{"type": "output_text", "text": "hi"}]
+                },
+                {
+                    "role": "developer",
+                    "content": [{"type": "output_text", "text": "rules"}]
+                }
+            ],
+        }))
+        .expect("failed to deserialize");
+
+        let codex: CodexRequestBody = body.into();
+        let out = serde_json::to_value(&codex).expect("failed to serialize");
+        assert_eq!(
+            out.pointer("/input/0/content/0/type"),
+            Some(&json!("output_text"))
+        );
+        assert_eq!(
+            out.pointer("/input/1/content/0/type"),
+            Some(&json!("output_text"))
         );
     }
 

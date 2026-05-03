@@ -8,4 +8,6 @@ pub mod openai;
 pub use antigravity::{AntigravityRequestBody, AntigravityRequestMeta};
 pub use codex::{CodexErrorBody, CodexRequestBody};
 pub use geminicli::{GeminiCliResponseBody, VertexGenerateContentRequest};
-pub use openai::{OpenaiRequestBody, OpenaiResponsesErrorBody, OpenaiResponsesErrorObject};
+pub use openai::{
+    OpenaiRequestBody, OpenaiResponsesErrorBody, OpenaiResponsesErrorObject, OpenaiRole,
+};

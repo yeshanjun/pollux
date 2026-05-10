@@ -34,7 +34,7 @@ pub enum GeminiCliActorMessage {
     /// Report invalid/expired access (e.g. 401/403); refresh then re-enqueue.
     ReportInvalid { id: CredentialId },
     /// Report a credential as banned/unusable; remove from queues and storage.
-    ReportBaned { id: CredentialId },
+    ReportBanned { id: CredentialId },
 
     /// Submit a batch of credentials and trigger one refresh pass for each.
     SubmitCredentials(Vec<GeminiCliProfile>),
@@ -95,8 +95,8 @@ impl GeminiCliActorHandle {
     }
 
     /// Report a credential as permanently banned/unusable; remove it entirely.
-    pub fn report_baned(&self, id: CredentialId) {
-        let _ = ractor::cast!(self.actor, GeminiCliActorMessage::ReportBaned { id });
+    pub fn report_banned(&self, id: CredentialId) {
+        let _ = ractor::cast!(self.actor, GeminiCliActorMessage::ReportBanned { id });
     }
 
     /// Submit new credentials to the actor and trigger refresh for each.
@@ -239,8 +239,8 @@ impl Actor for GeminiCliActor {
             GeminiCliActorMessage::ReportInvalid { id } => {
                 Self::handle_report_invalid(&myself, state, vec![id]);
             }
-            GeminiCliActorMessage::ReportBaned { id } => {
-                Self::handle_report_baned(state, id);
+            GeminiCliActorMessage::ReportBanned { id } => {
+                Self::handle_report_banned(state, id);
             }
             GeminiCliActorMessage::SubmitCredentials(creds_vec) => {
                 Self::handle_submit_credentials(state, creds_vec);
@@ -365,7 +365,7 @@ impl GeminiCliActor {
         );
     }
 
-    // handle_report_invalid, handle_report_baned, handle_submit_credentials
+    // handle_report_invalid, handle_report_banned, handle_submit_credentials
     fn handle_report_invalid(
         myself: &ActorRef<GeminiCliActorMessage>,
         state: &mut GeminiCliActorState,
@@ -416,7 +416,7 @@ impl GeminiCliActor {
         }
     }
 
-    fn handle_report_baned(state: &mut GeminiCliActorState, id: CredentialId) {
+    fn handle_report_banned(state: &mut GeminiCliActorState, id: CredentialId) {
         let ident = state.manager.get_identifier(id).to_owned();
         let removed_cred = state.manager.contains(id);
 

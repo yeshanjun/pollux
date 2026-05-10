@@ -34,7 +34,7 @@ pub enum AntigravityActorMessage {
     ReportInvalid { id: CredentialId },
 
     /// Report a credential as banned/unusable; remove from queues and storage.
-    ReportBaned { id: CredentialId },
+    ReportBanned { id: CredentialId },
 
     /// Submit a trusted OAuth token response to the actor for onboarding + persistence.
     SubmitTrustedOauth(OauthTokenResponse),
@@ -95,8 +95,8 @@ impl AntigravityActorHandle {
         );
     }
 
-    pub fn report_baned(&self, id: CredentialId) {
-        let _ = ractor::cast!(self.actor, AntigravityActorMessage::ReportBaned { id });
+    pub fn report_banned(&self, id: CredentialId) {
+        let _ = ractor::cast!(self.actor, AntigravityActorMessage::ReportBanned { id });
     }
 
     /// Submit a trusted OAuth token response to the actor.
@@ -221,8 +221,8 @@ impl Actor for AntigravityActor {
                 Self::handle_report_invalid(myself.clone(), state, vec![id]);
             }
 
-            AntigravityActorMessage::ReportBaned { id } => {
-                Self::handle_report_baned(state, id);
+            AntigravityActorMessage::ReportBanned { id } => {
+                Self::handle_report_banned(state, id);
             }
 
             AntigravityActorMessage::SubmitTrustedOauth(token_response) => {
@@ -383,7 +383,7 @@ impl AntigravityActor {
         });
     }
 
-    fn handle_report_baned(state: &mut AntigravityActorState, id: CredentialId) {
+    fn handle_report_banned(state: &mut AntigravityActorState, id: CredentialId) {
         let ident = state.manager.get_identifier(id).to_owned();
         let removed = state.manager.contains(id);
         state.manager.delete_credential(id);

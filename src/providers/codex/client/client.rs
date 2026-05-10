@@ -163,7 +163,7 @@ impl CodexClient {
                         // Optionally, could add a log here about when to retry
                     }
                     ActionForError::Ban => {
-                        handle.report_baned(lease.id);
+                        handle.report_banned(lease.id);
                     }
                     ActionForError::ModelUnsupported => {
                         handle.report_model_unsupported(lease.id, model_mask);
@@ -302,7 +302,7 @@ impl CodexClient {
                         handle.report_rate_limit(lease.id, model_mask, *duration);
                     }
                     ActionForError::Ban => {
-                        handle.report_baned(lease.id);
+                        handle.report_banned(lease.id);
                     }
                     ActionForError::ModelUnsupported => {
                         handle.report_model_unsupported(lease.id, model_mask);

@@ -45,7 +45,7 @@ pub enum CodexActorMessage {
     ReportInvalid { id: CredentialId },
 
     /// Report a credential as banned/unusable; remove from queues and storage.
-    ReportBaned { id: CredentialId },
+    ReportBanned { id: CredentialId },
 
     /// Submit a trusted OAuth token response (from the server-side OAuth exchange).
     ///
@@ -118,8 +118,8 @@ impl CodexActorHandle {
     }
 
     /// Report a credential as permanently banned/unusable; remove it entirely.
-    pub fn report_baned(&self, id: CredentialId) {
-        let _ = ractor::cast!(self.actor, CodexActorMessage::ReportBaned { id });
+    pub fn report_banned(&self, id: CredentialId) {
+        let _ = ractor::cast!(self.actor, CodexActorMessage::ReportBanned { id });
     }
 
     /// Submit a trusted OAuth token response to the actor for trusted ingest + persistence.
@@ -257,8 +257,8 @@ impl Actor for CodexActor {
                 Self::handle_report_invalid(myself.clone(), state, vec![id]);
             }
 
-            CodexActorMessage::ReportBaned { id } => {
-                Self::handle_report_baned(state, id);
+            CodexActorMessage::ReportBanned { id } => {
+                Self::handle_report_banned(state, id);
             }
 
             CodexActorMessage::SubmitTrustedOauth(token_response) => {
@@ -440,7 +440,7 @@ impl CodexActor {
         });
     }
 
-    fn handle_report_baned(state: &mut CodexActorState, id: CredentialId) {
+    fn handle_report_banned(state: &mut CodexActorState, id: CredentialId) {
         let ident = state.manager.get_identifier(id).to_owned();
         let removed = state.manager.contains(id);
 

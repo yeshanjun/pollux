@@ -187,7 +187,7 @@ impl AntigravityClient {
                                 );
                             }
                             crate::providers::ActionForError::Ban => {
-                                handle.report_baned(assigned.id);
+                                handle.report_banned(assigned.id);
                                 info!("Project: {}, banned", assigned.project_id);
                             }
                             crate::providers::ActionForError::ModelUnsupported => {

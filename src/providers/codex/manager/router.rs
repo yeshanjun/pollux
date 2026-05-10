@@ -43,7 +43,7 @@ mod tests {
 
     #[test]
     fn insert_and_get() {
-        let rt = RouteTable::new(100, Duration::from_secs(60));
+        let rt = RouteTable::new(100, Duration::from_mins(1));
         rt.insert(0xABCD, 0x01, 42);
         assert_eq!(rt.get(0xABCD, 0x01), Some(42));
         assert_eq!(rt.get(0xABCD, 0x02), None);
@@ -52,7 +52,7 @@ mod tests {
 
     #[test]
     fn different_model_mask_same_session() {
-        let rt = RouteTable::new(100, Duration::from_secs(60));
+        let rt = RouteTable::new(100, Duration::from_mins(1));
         rt.insert(0xAA, 0x01, 100);
         rt.insert(0xAA, 0x02, 200);
         assert_eq!(rt.get(0xAA, 0x01), Some(100));

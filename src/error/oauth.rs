@@ -35,11 +35,10 @@ pub enum OauthError {
 impl IsRetryable for OauthError {
     fn is_retryable(&self) -> bool {
         match self {
-            OauthError::Request(_) => true,
             OauthError::UpstreamStatus(status) => {
                 *status == StatusCode::TOO_MANY_REQUESTS || status.is_server_error()
             }
-            OauthError::Parse { .. } => true,
+            OauthError::Request(_) | OauthError::Parse { .. } => true,
             _ => false,
         }
     }

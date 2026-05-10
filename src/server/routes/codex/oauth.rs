@@ -119,8 +119,7 @@ async fn process_oauth_exchange(
         .id_token
         .as_deref()
         .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .is_none()
+        .is_none_or(str::is_empty)
     {
         return Err(OauthError::Flow {
             code: "MISSING_ID_TOKEN".to_string(),

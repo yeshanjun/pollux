@@ -1,3 +1,11 @@
+#![allow(
+    clippy::semicolon_if_nothing_returned,
+    clippy::too_many_lines,
+    clippy::doc_markdown,
+    clippy::used_underscore_binding,
+    clippy::duration_suboptimal_units,
+    clippy::redundant_closure_for_method_calls
+)]
 //! End-to-end benchmarks for the full Pollux request pipeline.
 //!
 //! These benchmarks exercise the **complete server-side processing chain**:
@@ -16,8 +24,8 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
-use std::hint::black_box;
 use criterion::{Criterion, criterion_group, criterion_main};
+use std::hint::black_box;
 use std::{
     fs,
     sync::Arc,

@@ -94,6 +94,7 @@ impl From<JsonRejection> for GeminiCliError {
 }
 
 impl IntoResponse for GeminiCliError {
+    #[allow(clippy::too_many_lines)]
     fn into_response(self) -> Response {
         let (status, error_body) = match self {
             GeminiCliError::RequestRejected {
@@ -234,9 +235,6 @@ impl From<crate::PolluxError> for GeminiCliError {
 impl IsRetryable for GeminiCliError {
     fn is_retryable(&self) -> bool {
         match self {
-            // Transport errors are already retried inside GeminiApi.
-            GeminiCliError::Reqwest(_) => false,
-
             GeminiCliError::UpstreamFallbackError { status, .. } => matches!(
                 *status,
                 StatusCode::TOO_MANY_REQUESTS
@@ -405,7 +403,7 @@ impl GeminiCliErrorBody {
                 .ok()
                 .map(|dt| (dt.with_timezone(&Utc) - Utc::now()).num_seconds())
                 .filter(|&diff| diff > 0)
-                .map_or(90, |diff| diff as u64 + 1);
+                .map_or(90, |diff| diff.cast_unsigned() + 1);
             Some(RateLimitVariant::QuotaCooldown(secs))
         }) {
             return variant;
@@ -458,9 +456,8 @@ impl MappingAction for GeminiCliErrorBody {
     fn action_from_status(status: StatusCode) -> ActionForError {
         match status {
             StatusCode::UNAUTHORIZED => ActionForError::Invalid,
-            StatusCode::FORBIDDEN => ActionForError::None, // often WAF or transient; preserve cred
             StatusCode::NOT_FOUND => ActionForError::ModelUnsupported,
-            StatusCode::TOO_MANY_REQUESTS => ActionForError::RateLimit(Duration::from_secs(60)),
+            StatusCode::TOO_MANY_REQUESTS => ActionForError::RateLimit(Duration::from_mins(1)),
             _ => ActionForError::None,
         }
     }
@@ -557,7 +554,7 @@ mod tests {
         match action {
             Some(ActionForError::RateLimit(d)) => {
                 assert!(
-                    d >= Duration::from_secs(45 * 60) && d <= Duration::from_secs(60 * 60),
+                    d >= Duration::from_mins(45) && d <= Duration::from_hours(1),
                     "expected 45–60 min, got {d:?}"
                 );
             }
@@ -565,8 +562,8 @@ mod tests {
         }
     }
 
-    /// Real upstream: RATE_LIMIT_EXCEEDED with quotaResetDelay=0s and no timestamp —
-    /// upstream capacity shortage, same as MODEL_CAPACITY_EXHAUSTED.
+    /// Real upstream: `RATE_LIMIT_EXCEEDED` with quotaResetDelay=0s and no timestamp —
+    /// upstream capacity shortage, same as `MODEL_CAPACITY_EXHAUSTED`.
     #[test]
     fn rate_limit_429_capacity_pressure_zero_delay() {
         let raw = r#"{

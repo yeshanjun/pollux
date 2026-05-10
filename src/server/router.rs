@@ -111,6 +111,7 @@ impl PolluxState {
     }
 
     #[must_use]
+    #[allow(clippy::too_many_lines)]
     pub fn new(providers: Providers, pollux_key: Arc<str>, insecure_cookie: bool) -> Self {
         let geminicli_cfg = providers.geminicli_cfg.clone();
         let codex_cfg = providers.codex_cfg.clone();
@@ -122,7 +123,7 @@ impl PolluxState {
 
         let geminicli_has_custom_url = geminicli_cfg.custom_api_url != geminicli_default_url;
         let codex_has_custom_url = codex_cfg.custom_api_url != codex_default_url;
-        let request_timeout = Some(Duration::from_secs(10 * 60));
+        let request_timeout = Some(Duration::from_mins(10));
         let stream_timeout = None;
 
         let geminicli_client = Self::build_client(

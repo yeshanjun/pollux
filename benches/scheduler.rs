@@ -1,9 +1,17 @@
+#![allow(
+    clippy::semicolon_if_nothing_returned,
+    clippy::too_many_lines,
+    clippy::doc_markdown,
+    clippy::used_underscore_binding,
+    clippy::duration_suboptimal_units,
+    clippy::redundant_closure_for_method_calls
+)]
 //! Benchmarks for the credential scheduler hot path.
 //!
 //! Run with: cargo bench --features bench --bench scheduler
 
-use std::hint::black_box;
 use criterion::{Criterion, criterion_group, criterion_main};
+use std::hint::black_box;
 use std::time::Duration;
 
 use chrono::Utc;
@@ -351,4 +359,11 @@ criterion_group!(
     bench_get_assigned_all_cooling_1000,
 );
 
-criterion_main!(assignment, mixed_states, cooldown, management, scale, exhaustion);
+criterion_main!(
+    assignment,
+    mixed_states,
+    cooldown,
+    management,
+    scale,
+    exhaustion
+);

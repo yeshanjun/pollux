@@ -76,6 +76,7 @@ impl ModelCapabilities {
 
     /// Returns the union of two capability sets.
     #[inline]
+    #[must_use]
     pub fn merge(&self, other: ModelCapabilities) -> Self {
         Self(self.0 | other.0)
     }

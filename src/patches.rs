@@ -68,9 +68,9 @@ pub enum ProviderPatch {
 impl ProviderPatch {
     pub fn id(&self) -> u64 {
         match self {
-            ProviderPatch::GeminiCli { id, .. } => *id,
-            ProviderPatch::Codex { id, .. } => *id,
-            ProviderPatch::Antigravity { id, .. } => *id,
+            ProviderPatch::GeminiCli { id, .. }
+            | ProviderPatch::Codex { id, .. }
+            | ProviderPatch::Antigravity { id, .. } => *id,
         }
     }
 }

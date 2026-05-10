@@ -92,6 +92,7 @@ impl From<JsonRejection> for CodexError {
 }
 
 impl IntoResponse for CodexError {
+    #[allow(clippy::too_many_lines)]
     fn into_response(self) -> Response {
         let (status, error_body) = match self {
             CodexError::RequestRejected {
@@ -230,8 +231,6 @@ impl From<crate::PolluxError> for CodexError {
 impl IsRetryable for CodexError {
     fn is_retryable(&self) -> bool {
         match self {
-            // Server/transport errors has been retried.
-            CodexError::Reqwest(_) => false,
             CodexError::UpstreamFallbackError { status, .. } => matches!(
                 *status,
                 StatusCode::UNAUTHORIZED

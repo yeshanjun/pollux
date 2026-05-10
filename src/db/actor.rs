@@ -155,7 +155,7 @@ impl DbActor {
             ProviderCreate::GeminiCli(c) => {
                 let now = Utc::now();
                 let id: i64 = sqlx::query_scalar(
-                    r#"
+                    r"
                 INSERT INTO gemini_cli (
                     email, sub, project_id, refresh_token, access_token, expiry, status, created_at, updated_at
                 )
@@ -168,7 +168,7 @@ impl DbActor {
                     status=1,
                     updated_at=excluded.updated_at
                 RETURNING id
-                "#,
+                ",
                 )
                 .bind(c.email)
                 .bind(c.sub)
@@ -188,7 +188,7 @@ impl DbActor {
                 let now = Utc::now();
 
                 let id: i64 = sqlx::query_scalar(
-                    r#"
+                    r"
                 INSERT INTO codex (
                     email, sub, account_id, refresh_token, access_token, expiry, chatgpt_plan_type, status, created_at, updated_at
                 )
@@ -202,7 +202,7 @@ impl DbActor {
                     status = 1,
                     updated_at = excluded.updated_at
                 RETURNING id
-                "#,
+                ",
                 )
                 .bind(c.email)
                 .bind(c.sub)
@@ -226,7 +226,7 @@ impl DbActor {
                     .unwrap_or_else(|| synthetic_sub_from_refresh_token(&c.refresh_token));
 
                 let id: i64 = sqlx::query_scalar(
-                    r#"
+                    r"
                 INSERT INTO antigravity (
                     email, sub, project_id, refresh_token, access_token, expiry, status, created_at, updated_at
                 )
@@ -239,7 +239,7 @@ impl DbActor {
                     status=1,
                     updated_at=excluded.updated_at
                 RETURNING id
-                "#,
+                ",
                 )
                 .bind(c.email)
                 .bind(sub)
@@ -262,12 +262,12 @@ impl DbActor {
         pool: &SqlitePool,
     ) -> Result<Vec<DbGeminiCliResource>, PolluxError> {
         let rows = sqlx::query_as::<_, DbGeminiCliResource>(
-            r#"
+            r"
         SELECT id, email, sub, project_id, refresh_token, access_token, expiry, status, created_at, updated_at
         FROM gemini_cli
         WHERE status = 1
         ORDER BY id
-        "#,
+        ",
         )
         .fetch_all(pool)
         .await?;
@@ -280,12 +280,12 @@ impl DbActor {
         pool: &SqlitePool,
     ) -> Result<Vec<DbCodexResource>, PolluxError> {
         let rows = sqlx::query_as::<_, DbCodexResource>(
-            r#"
+            r"
         SELECT id, email, sub, account_id, refresh_token, access_token, expiry, chatgpt_plan_type, status, created_at, updated_at
         FROM codex
         WHERE status = 1
         ORDER BY id
-        "#,
+        ",
         )
         .fetch_all(pool)
         .await?;
@@ -298,12 +298,12 @@ impl DbActor {
         pool: &SqlitePool,
     ) -> Result<Vec<DbAntigravityResource>, PolluxError> {
         let rows = sqlx::query_as::<_, DbAntigravityResource>(
-            r#"
+            r"
         SELECT id, email, sub, project_id, refresh_token, access_token, expiry, status, created_at, updated_at
         FROM antigravity
         WHERE status = 1
         ORDER BY id
-        "#,
+        ",
         )
         .fetch_all(pool)
         .await?;
@@ -317,11 +317,11 @@ impl DbActor {
         id: i64,
     ) -> Result<DbCodexResource, PolluxError> {
         let row = sqlx::query_as::<_, DbCodexResource>(
-            r#"
+            r"
         SELECT id, email, sub, account_id, refresh_token, access_token, expiry, chatgpt_plan_type, status, created_at, updated_at
         FROM codex
         WHERE id = ?
-        "#,
+        ",
         )
         .bind(id)
         .fetch_one(pool)

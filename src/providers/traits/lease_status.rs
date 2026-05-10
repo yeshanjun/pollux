@@ -5,7 +5,7 @@ use std::fmt;
 /// Each lease type controls its own formatting so it can include
 /// whichever fields are most useful for human readers — e.g.
 /// `project=my-proj-123` or `account=acct-456, email=foo@bar.com`.
-pub(crate) trait LeaseLabel {
+pub trait LeaseLabel {
     fn fmt_label(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result;
 }
 

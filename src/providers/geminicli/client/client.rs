@@ -4,8 +4,8 @@ use crate::providers::policy::classify_upstream_error;
 use crate::providers::provider_endpoints::ProviderEndpoints;
 use crate::providers::upstream_retry::post_json_bytes_with_retry;
 use crate::utils::logging::with_pretty_json_debug;
-use backon::{ExponentialBuilder, Retryable};
 use axum::body::Bytes;
+use backon::{ExponentialBuilder, Retryable};
 use pollux_schema::{
     gemini::GeminiGenerateContentRequest, geminicli::VertexGenerateContentRequest,
 };
@@ -35,7 +35,7 @@ impl GeminiClient {
             .with_min_delay(Duration::ZERO)
             .with_max_delay(Duration::ZERO)
             .with_max_times(retry_max_times);
-        let endpoints = Self::endpoints_for_base(&base_url);
+        let endpoints = Self::endpoints_for_base(base_url);
         info!(endpoint = %endpoints.select(false), "GeminiClient initialized");
 
         Self {
@@ -57,6 +57,7 @@ impl GeminiClient {
         )
     }
 
+    #[allow(clippy::too_many_lines)]
     pub async fn call_gemini_cli(
         &self,
         handle: &GeminiCliActorHandle,

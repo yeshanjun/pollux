@@ -110,6 +110,7 @@ impl AntigravityRefresherHandle {
 /// - governor rate limiter (`oauth_tps`)
 /// - `buffer_unordered` concurrency
 /// - deterministic retry policy inside the ops layer
+#[allow(clippy::needless_pass_by_value)]
 pub(crate) fn spawn_pipeline(
     cfg: Arc<AntigravityResolvedConfig>,
 ) -> (AntigravityRefresherHandle, mpsc::Receiver<RefreshOutcome>) {
@@ -197,9 +198,9 @@ async fn refresh_existing(
 
     let access_token = token.access_token().secret().clone();
 
-    let expires_in = token.expires_in().unwrap_or(Duration::from_secs(3600));
+    let expires_in = token.expires_in().unwrap_or(Duration::from_hours(1));
     let expiry = Utc::now()
-        + ChronoDuration::from_std(expires_in).unwrap_or_else(|_| ChronoDuration::seconds(3600));
+        + ChronoDuration::from_std(expires_in).unwrap_or_else(|_| ChronoDuration::hours(1));
 
     Ok(AntigravityPatch {
         refresh_token: None,
@@ -224,9 +225,9 @@ async fn refresh_and_discover(
 
     let access_token = token.access_token().secret().clone();
 
-    let expires_in = token.expires_in().unwrap_or(Duration::from_secs(3600));
+    let expires_in = token.expires_in().unwrap_or(Duration::from_hours(1));
     let expiry = Utc::now()
-        + ChronoDuration::from_std(expires_in).unwrap_or_else(|_| ChronoDuration::seconds(3600));
+        + ChronoDuration::from_std(expires_in).unwrap_or_else(|_| ChronoDuration::hours(1));
 
     let project_id = ensure_project_id(access_token.as_str(), cfg.as_ref(), http_client).await?;
 

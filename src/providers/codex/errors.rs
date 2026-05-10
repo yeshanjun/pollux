@@ -52,12 +52,8 @@ impl MappingAction for CodexErrorBody {
         match status {
             StatusCode::UNAUTHORIZED => ActionForError::Invalid,
             StatusCode::PAYMENT_REQUIRED => ActionForError::Ban,
-            // Possibly ban with WAF
-            StatusCode::FORBIDDEN => ActionForError::None,
             // Immediate rate limit without structured error
-            StatusCode::TOO_MANY_REQUESTS => {
-                ActionForError::RateLimit(Duration::from_secs(10 * 60))
-            }
+            StatusCode::TOO_MANY_REQUESTS => ActionForError::RateLimit(Duration::from_mins(10)),
             _ => ActionForError::None,
         }
     }

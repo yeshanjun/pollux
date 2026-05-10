@@ -215,7 +215,7 @@ impl Actor for CodexActor {
             "CodexActor runtime config loaded"
         );
 
-        let router = RouteTable::new(10_000, std::time::Duration::from_secs(3600));
+        let router = RouteTable::new(10_000, std::time::Duration::from_hours(1));
 
         Ok(CodexActorState {
             ops,

@@ -1,3 +1,10 @@
+#![allow(
+    clippy::too_many_lines,
+    clippy::uninlined_format_args,
+    clippy::explicit_iter_loop,
+    clippy::map_unwrap_or,
+    clippy::manual_is_variant_and
+)]
 use axum::{
     Json, Router,
     extract::State,

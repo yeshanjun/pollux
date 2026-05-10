@@ -235,7 +235,7 @@ impl CredentialJob {
     pub(in crate::providers::codex) fn ingest_trusted_oauth(
         token_response: &OauthTokenResponse,
     ) -> Result<Self, PolluxError> {
-        let cred = CodexResource::try_from_oauth_token_response(&token_response, None)?;
+        let cred = CodexResource::try_from_oauth_token_response(token_response, None)?;
         Ok(Self {
             cred,
             kind: CredentialJobKind::IngestTrusted,

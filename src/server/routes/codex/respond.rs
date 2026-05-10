@@ -15,7 +15,7 @@ use std::time::Duration;
 use tokio_stream::StreamExt;
 use tracing::error;
 
-const SSE_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+const SSE_IDLE_TIMEOUT: Duration = Duration::from_mins(1);
 
 /// Build SSE stream response.
 pub(super) fn build_stream_response(upstream_resp: reqwest::Response) -> impl IntoResponse {

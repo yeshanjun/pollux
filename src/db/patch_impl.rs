@@ -10,6 +10,7 @@ use tracing::debug;
 use crate::error::PolluxError;
 use crate::patches::{AntigravityPatch, CodexPatch, DbPatchable, GeminiCliPatch, ProviderPatch};
 
+#[allow(clippy::too_many_lines)]
 #[async_trait]
 impl DbPatchable for ProviderPatch {
     async fn apply_patch(&self, pool: &SqlitePool) -> Result<(), PolluxError> {
@@ -35,7 +36,7 @@ impl DbPatchable for ProviderPatch {
                 let updated_at = Utc::now();
 
                 let res = sqlx::query!(
-                    r#"
+                    r"
                     UPDATE gemini_cli
                     SET
                         email = COALESCE(?, email),
@@ -45,7 +46,7 @@ impl DbPatchable for ProviderPatch {
                         status = COALESCE(?, status),
                         updated_at = ?
                     WHERE id = ?
-                    "#,
+                    ",
                     email,
                     refresh_token,
                     access_token,
@@ -107,7 +108,7 @@ impl DbPatchable for ProviderPatch {
 
                 // Use the non-macro query API so we don't have to keep SQLx's offline cache in sync.
                 let res = sqlx::query(
-                    r#"
+                    r"
                     UPDATE codex
                     SET
                         email = COALESCE(?, email),
@@ -120,7 +121,7 @@ impl DbPatchable for ProviderPatch {
                         status = COALESCE(?, status),
                         updated_at = ?
                     WHERE id = ?
-                    "#,
+                    ",
                 )
                 .bind(email)
                 .bind(account_id)
@@ -183,7 +184,7 @@ impl DbPatchable for ProviderPatch {
 
                 // Use bind query API to avoid SQLx offline cache requirements.
                 let res = sqlx::query(
-                    r#"
+                    r"
                     UPDATE antigravity
                     SET
                         email = COALESCE(?, email),
@@ -193,7 +194,7 @@ impl DbPatchable for ProviderPatch {
                         status = COALESCE(?, status),
                         updated_at = ?
                     WHERE id = ?
-                    "#,
+                    ",
                 )
                 .bind(email)
                 .bind(refresh_token)

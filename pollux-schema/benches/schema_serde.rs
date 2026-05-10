@@ -1,6 +1,14 @@
-use std::hint::black_box;
+#![allow(
+    clippy::semicolon_if_nothing_returned,
+    clippy::too_many_lines,
+    clippy::doc_markdown,
+    clippy::used_underscore_binding,
+    clippy::duration_suboptimal_units,
+    clippy::redundant_closure_for_method_calls
+)]
 use criterion::{Criterion, criterion_group, criterion_main};
 use serde_json::{Value, json};
+use std::hint::black_box;
 
 use pollux_schema::antigravity::AntigravityRequestBody;
 use pollux_schema::codex::CodexRequestBody;

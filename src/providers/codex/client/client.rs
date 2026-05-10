@@ -42,8 +42,8 @@ impl CodexClient {
             .with_min_delay(Duration::ZERO)
             .with_max_delay(Duration::ZERO)
             .with_max_times(retry_max_times);
-        let compact_url = Self::compact_url(&base_url);
-        let endpoints = Self::endpoints_for_base(&base_url);
+        let compact_url = Self::compact_url(base_url);
+        let endpoints = Self::endpoints_for_base(base_url);
         info!(endpoint = %endpoints.select(false), "CodexClient initialized");
 
         Self {
@@ -71,6 +71,7 @@ impl CodexClient {
             .expect("valid compact endpoint path")
     }
 
+    #[allow(clippy::too_many_lines)]
     pub(crate) async fn call_codex(
         &self,
         handle: &CodexActorHandle,
@@ -93,128 +94,128 @@ impl CodexClient {
         let op = move || {
             let request_body = request_body.clone();
             async move {
-            let start = Instant::now();
-            let lease = handle
-                .get_credential(model_mask, ctx.route_key)
-                .await?
-                .ok_or(CodexError::NoAvailableCredential)?;
+                let start = Instant::now();
+                let lease = handle
+                    .get_credential(model_mask, ctx.route_key)
+                    .await?
+                    .ok_or(CodexError::NoAvailableCredential)?;
 
-            let waited_us = start.elapsed().as_micros();
-            info!(
-                waited_us,
-                id = lease.id,
-                model = %model,
-                stream,
-                "[Codex] Lease acquired"
-            );
-
-            with_pretty_json_debug(&body, |pretty_payload| {
-                tracing::debug!(
-                    channel = "codex",
-                    lease.id = lease.id,
-                    req.model = %model,
-                    req.stream = stream,
-                    req.upstream_stream = body.stream,
-                    body = %pretty_payload,
-                    "[Codex] Prepared upstream payload"
+                let waited_us = start.elapsed().as_micros();
+                info!(
+                    waited_us,
+                    id = lease.id,
+                    model = %model,
+                    stream,
+                    "[Codex] Lease acquired"
                 );
-            });
 
-            let codex_headers = CodexRequestHeaders::build(inbound_headers, &lease);
-            debug!(codex_headers = ?codex_headers, "[Codex] Prepared upstream headers for request");
-            let mut upstream_headers = codex_headers.into_header_map();
-
-            if let Some(header_name) = trace_header {
-                let email = lease.email.as_deref().unwrap_or("unknown");
-                let trace_value = format!("codex:{}:{}", email, lease.id);
-                if let (Ok(name), Ok(val)) = (
-                    HeaderName::from_bytes(header_name.as_bytes()),
-                    HeaderValue::from_str(&trace_value),
-                ) {
-                    upstream_headers.insert(name, val);
-                }
-            }
-
-            let resp = post_json_bytes_with_retry(
-                "Codex",
-                client,
-                endpoints.select(stream),
-                Some(upstream_headers),
-                request_body,
-            )
-            .await?;
-
-            if resp.status().is_success() {
-                return Ok(resp);
-            }
-
-            let status = resp.status();
-            let (action, final_error) = classify_upstream_error(
-                resp,
-                |json: CodexErrorBody| CodexError::UpstreamMappedError { status, body: json },
-                |status, body| CodexError::UpstreamFallbackError { status, body },
-            )
-            .await;
-
-            match &action {
-                ActionForError::RateLimit(duration) => {
-                    handle.report_rate_limit(lease.id, model_mask, *duration);
-                    // Optionally, could add a log here about when to retry
-                }
-                ActionForError::Ban => {
-                    handle.report_baned(lease.id);
-                }
-                ActionForError::ModelUnsupported => {
-                    handle.report_model_unsupported(lease.id, model_mask);
-                }
-                ActionForError::Invalid => {
-                    handle.report_invalid(lease.id);
-                }
-                ActionForError::None => {
-                    // Do nothing
-                }
-            }
-
-            match &final_error {
-                CodexError::UpstreamMappedError { status, .. } => {
-                    tracing::warn!(
-                        lease_id = lease.id,
-                        model = %model,
-                        status = %status,
-                        action = ?action,
-                        "[Codex] Upstream mapped error"
+                with_pretty_json_debug(&body, |pretty_payload| {
+                    tracing::debug!(
+                        channel = "codex",
+                        lease.id = lease.id,
+                        req.model = %model,
+                        req.stream = stream,
+                        req.upstream_stream = body.stream,
+                        body = %pretty_payload,
+                        "[Codex] Prepared upstream payload"
                     );
-                }
-                CodexError::UpstreamFallbackError { status, .. } => {
-                    tracing::warn!(
-                        lease_id = lease.id,
-                        model = %model,
-                        status = %status,
-                        action = ?action,
-                        "[Codex] Upstream fallback error"
-                    );
-                }
-                CodexError::Reqwest(error) => {
-                    tracing::warn!(
-                        lease_id = lease.id,
-                        model = %model,
-                        status = ?error.status(),
-                        action = ?action,
-                        "[Codex] Upstream reqwest error"
-                    );
-                }
-                _ => {
-                    tracing::warn!(
-                        lease_id = lease.id,
-                        model = %model,
-                        status = "N/A",
-                        action = ?action,
-                        "[Codex] Upstream other error"
-                    );
-                }
-            }
+                });
 
-            Err(final_error)
+                let codex_headers = CodexRequestHeaders::build(inbound_headers, &lease);
+                debug!(codex_headers = ?codex_headers, "[Codex] Prepared upstream headers for request");
+                let mut upstream_headers = codex_headers.into_header_map();
+
+                if let Some(header_name) = trace_header {
+                    let email = lease.email.as_deref().unwrap_or("unknown");
+                    let trace_value = format!("codex:{}:{}", email, lease.id);
+                    if let (Ok(name), Ok(val)) = (
+                        HeaderName::from_bytes(header_name.as_bytes()),
+                        HeaderValue::from_str(&trace_value),
+                    ) {
+                        upstream_headers.insert(name, val);
+                    }
+                }
+
+                let resp = post_json_bytes_with_retry(
+                    "Codex",
+                    client,
+                    endpoints.select(stream),
+                    Some(upstream_headers),
+                    request_body,
+                )
+                .await?;
+
+                if resp.status().is_success() {
+                    return Ok(resp);
+                }
+
+                let status = resp.status();
+                let (action, final_error) = classify_upstream_error(
+                    resp,
+                    |json: CodexErrorBody| CodexError::UpstreamMappedError { status, body: json },
+                    |status, body| CodexError::UpstreamFallbackError { status, body },
+                )
+                .await;
+
+                match &action {
+                    ActionForError::RateLimit(duration) => {
+                        handle.report_rate_limit(lease.id, model_mask, *duration);
+                        // Optionally, could add a log here about when to retry
+                    }
+                    ActionForError::Ban => {
+                        handle.report_baned(lease.id);
+                    }
+                    ActionForError::ModelUnsupported => {
+                        handle.report_model_unsupported(lease.id, model_mask);
+                    }
+                    ActionForError::Invalid => {
+                        handle.report_invalid(lease.id);
+                    }
+                    ActionForError::None => {
+                        // Do nothing
+                    }
+                }
+
+                match &final_error {
+                    CodexError::UpstreamMappedError { status, .. } => {
+                        tracing::warn!(
+                            lease_id = lease.id,
+                            model = %model,
+                            status = %status,
+                            action = ?action,
+                            "[Codex] Upstream mapped error"
+                        );
+                    }
+                    CodexError::UpstreamFallbackError { status, .. } => {
+                        tracing::warn!(
+                            lease_id = lease.id,
+                            model = %model,
+                            status = %status,
+                            action = ?action,
+                            "[Codex] Upstream fallback error"
+                        );
+                    }
+                    CodexError::Reqwest(error) => {
+                        tracing::warn!(
+                            lease_id = lease.id,
+                            model = %model,
+                            status = ?error.status(),
+                            action = ?action,
+                            "[Codex] Upstream reqwest error"
+                        );
+                    }
+                    _ => {
+                        tracing::warn!(
+                            lease_id = lease.id,
+                            model = %model,
+                            status = "N/A",
+                            action = ?action,
+                            "[Codex] Upstream other error"
+                        );
+                    }
+                }
+
+                Err(final_error)
             }
         };
 
@@ -247,80 +248,80 @@ impl CodexClient {
         let op = move || {
             let request_body = request_body.clone();
             async move {
-            let start = Instant::now();
-            let lease = handle
-                .get_credential(model_mask, ctx.route_key)
-                .await?
-                .ok_or(CodexError::NoAvailableCredential)?;
+                let start = Instant::now();
+                let lease = handle
+                    .get_credential(model_mask, ctx.route_key)
+                    .await?
+                    .ok_or(CodexError::NoAvailableCredential)?;
 
-            let waited_us = start.elapsed().as_micros();
-            info!(
-                waited_us,
-                id = lease.id,
-                model = %model,
-                "[Codex] Compact lease acquired"
-            );
+                let waited_us = start.elapsed().as_micros();
+                info!(
+                    waited_us,
+                    id = lease.id,
+                    model = %model,
+                    "[Codex] Compact lease acquired"
+                );
 
-            let codex_headers = CodexRequestHeaders::build(inbound_headers, &lease);
-            let mut upstream_headers = codex_headers.into_header_map();
+                let codex_headers = CodexRequestHeaders::build(inbound_headers, &lease);
+                let mut upstream_headers = codex_headers.into_header_map();
 
-            if let Some(header_name) = trace_header {
-                let email = lease.email.as_deref().unwrap_or("unknown");
-                let trace_value = format!("codex:{}:{}", email, lease.id);
-                if let (Ok(name), Ok(val)) = (
-                    HeaderName::from_bytes(header_name.as_bytes()),
-                    HeaderValue::from_str(&trace_value),
-                ) {
-                    upstream_headers.insert(name, val);
+                if let Some(header_name) = trace_header {
+                    let email = lease.email.as_deref().unwrap_or("unknown");
+                    let trace_value = format!("codex:{}:{}", email, lease.id);
+                    if let (Ok(name), Ok(val)) = (
+                        HeaderName::from_bytes(header_name.as_bytes()),
+                        HeaderValue::from_str(&trace_value),
+                    ) {
+                        upstream_headers.insert(name, val);
+                    }
                 }
-            }
 
-            let resp = post_json_bytes_with_retry(
-                "Codex",
-                client,
-                compact_url,
-                Some(upstream_headers),
-                request_body,
-            )
-            .await?;
+                let resp = post_json_bytes_with_retry(
+                    "Codex",
+                    client,
+                    compact_url,
+                    Some(upstream_headers),
+                    request_body,
+                )
+                .await?;
 
-            if resp.status().is_success() {
-                return Ok(resp);
-            }
-
-            let status = resp.status();
-            let (action, final_error) = classify_upstream_error(
-                resp,
-                |json: CodexErrorBody| CodexError::UpstreamMappedError { status, body: json },
-                |status, body| CodexError::UpstreamFallbackError { status, body },
-            )
-            .await;
-
-            match &action {
-                ActionForError::RateLimit(duration) => {
-                    handle.report_rate_limit(lease.id, model_mask, *duration);
+                if resp.status().is_success() {
+                    return Ok(resp);
                 }
-                ActionForError::Ban => {
-                    handle.report_baned(lease.id);
-                }
-                ActionForError::ModelUnsupported => {
-                    handle.report_model_unsupported(lease.id, model_mask);
-                }
-                ActionForError::Invalid => {
-                    handle.report_invalid(lease.id);
-                }
-                ActionForError::None => {}
-            }
 
-            tracing::warn!(
-                lease_id = lease.id,
-                model = %model,
-                status = %status,
-                action = ?action,
-                "[Codex] Compact upstream error"
-            );
+                let status = resp.status();
+                let (action, final_error) = classify_upstream_error(
+                    resp,
+                    |json: CodexErrorBody| CodexError::UpstreamMappedError { status, body: json },
+                    |status, body| CodexError::UpstreamFallbackError { status, body },
+                )
+                .await;
 
-            Err(final_error)
+                match &action {
+                    ActionForError::RateLimit(duration) => {
+                        handle.report_rate_limit(lease.id, model_mask, *duration);
+                    }
+                    ActionForError::Ban => {
+                        handle.report_baned(lease.id);
+                    }
+                    ActionForError::ModelUnsupported => {
+                        handle.report_model_unsupported(lease.id, model_mask);
+                    }
+                    ActionForError::Invalid => {
+                        handle.report_invalid(lease.id);
+                    }
+                    ActionForError::None => {}
+                }
+
+                tracing::warn!(
+                    lease_id = lease.id,
+                    model = %model,
+                    status = %status,
+                    action = ?action,
+                    "[Codex] Compact upstream error"
+                );
+
+                Err(final_error)
             }
         };
 

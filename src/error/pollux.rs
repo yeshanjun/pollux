@@ -94,8 +94,7 @@ impl IntoResponse for PolluxError {
             }
 
             PolluxError::StreamProtocolError(_)
-            | PolluxError::Oauth(OauthError::Request(_))
-            | PolluxError::Oauth(OauthError::ServerResponse { .. })
+            | PolluxError::Oauth(OauthError::Request(_) | OauthError::ServerResponse { .. })
             | PolluxError::ReqwestError(_)
             | PolluxError::UrlError(_) => {
                 let status = StatusCode::BAD_GATEWAY;
@@ -168,8 +167,6 @@ impl IsRetryable for PolluxError {
                     | reqwest::StatusCode::FORBIDDEN
                     | reqwest::StatusCode::NOT_FOUND
             ),
-            PolluxError::Oauth(OauthError::ServerResponse { .. }) => false,
-            PolluxError::UnexpectedError(_) => false,
             _ => false,
         }
     }

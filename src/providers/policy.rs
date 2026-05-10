@@ -20,7 +20,7 @@ pub trait MappingAction: std::fmt::Debug + DeserializeOwned + Serialize {
     #[must_use]
     fn action_from_status(status: StatusCode) -> ActionForError {
         match status {
-            StatusCode::TOO_MANY_REQUESTS => ActionForError::RateLimit(Duration::from_secs(60)),
+            StatusCode::TOO_MANY_REQUESTS => ActionForError::RateLimit(Duration::from_mins(1)),
             StatusCode::FORBIDDEN | StatusCode::PAYMENT_REQUIRED => ActionForError::Ban,
             StatusCode::UNAUTHORIZED => ActionForError::Invalid,
             _ => ActionForError::None,

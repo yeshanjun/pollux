@@ -290,7 +290,7 @@ impl AntigravityActor {
         let start = std::time::Instant::now();
         let assignment = state.manager.get_assigned(model_mask, None);
         let sched_us = start.elapsed().as_micros();
-        let stats = &assignment.stats;
+        let assignment_stats = &assignment.stats;
 
         if !assignment.refresh_ids.is_empty() {
             Self::handle_report_invalid(myself, state, assignment.refresh_ids);
@@ -302,10 +302,10 @@ impl AntigravityActor {
                 id = assigned.id,
                 project = %assigned.project_id,
                 model_mask = format_args!("0x{:016x}", model_mask),
-                queue = stats.queue_len,
-                total = stats.total_creds,
-                cooling = stats.cooldowns,
-                refreshing = stats.refreshing,
+                queue = assignment_stats.queue_len,
+                total = assignment_stats.total_creds,
+                cooling = assignment_stats.cooldowns,
+                refreshing = assignment_stats.refreshing,
                 "[Antigravity] Credential assigned"
             );
             let _ = reply_port.send(Some(assigned));
@@ -314,13 +314,13 @@ impl AntigravityActor {
 
         warn!(
             model_mask = format_args!("0x{:016x}", model_mask),
-            queue = stats.queue_len,
-            total = stats.total_creds,
-            cooling = stats.cooldowns,
-            refreshing = stats.refreshing,
-            skipped.cooling = stats.skipped_cooling,
-            skipped.refreshing = stats.skipped_refreshing,
-            skipped.expired = stats.skipped_expired,
+            queue = assignment_stats.queue_len,
+            total = assignment_stats.total_creds,
+            cooling = assignment_stats.cooldowns,
+            refreshing = assignment_stats.refreshing,
+            skipped.cooling = assignment_stats.skipped_cooling,
+            skipped.refreshing = assignment_stats.skipped_refreshing,
+            skipped.expired = assignment_stats.skipped_expired,
             "[Antigravity] No credential available"
         );
         let _ = reply_port.send(None);

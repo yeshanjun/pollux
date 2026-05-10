@@ -79,6 +79,7 @@ impl AntigravityClient {
         )
     }
 
+    #[allow(clippy::too_many_lines)]
     pub async fn call_antigravity(
         &self,
         handle: &AntigravityActorHandle,

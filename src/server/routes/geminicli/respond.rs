@@ -40,7 +40,7 @@ pub fn build_stream_response(
     let raw_stream = upstream_resp.bytes_stream().eventsource();
     let record_stream = transform_stream(raw_stream, state.clone(), sniffer);
     let timed_stream = record_stream
-        .timeout(Duration::from_secs(60))
+        .timeout(Duration::from_mins(1))
         .map(move |item| match item {
             Ok(Ok(event)) => Ok(event),
             Ok(Err(e)) => Err(GeminiCliError::StreamProtocolError(e.to_string())),

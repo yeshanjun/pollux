@@ -37,7 +37,7 @@ pub fn build_stream_response(
     let sniffer = state.providers.antigravity_thoughtsig.build_sniffer();
     let raw_stream = upstream_resp.bytes_stream().eventsource();
     let timed_stream = transform_stream(raw_stream, state.clone(), sniffer)
-        .timeout(Duration::from_secs(60))
+        .timeout(Duration::from_mins(1))
         .map(|item| match item {
             Ok(Ok(event)) => Ok(event),
             Ok(Err(e)) => Err(GeminiCliError::StreamProtocolError(e.to_string())),

@@ -598,14 +598,14 @@ mod tests {
         }
     }
 
-    /// Default mock: PerModel cooldown.
+    /// Default mock: `PerModel` cooldown.
     #[derive(Debug, Clone)]
     struct MockResource(bool);
 
     impl Schedulable for MockResource {
         type Lease = MockLease;
 
-        fn identifier(&self) -> &str {
+        fn identifier(&self) -> &'static str {
             "mock"
         }
 
@@ -618,7 +618,7 @@ mod tests {
         }
     }
 
-    /// PerCredential cooldown variant.
+    /// `PerCredential` cooldown variant.
     #[derive(Debug, Clone)]
     struct MockPerCredResource(bool);
 
@@ -626,7 +626,7 @@ mod tests {
         type Lease = MockLease;
         const COOLDOWN_GRANULARITY: CooldownScope = CooldownScope::PerCredential;
 
-        fn identifier(&self) -> &str {
+        fn identifier(&self) -> &'static str {
             "mock-per-cred"
         }
 
@@ -807,7 +807,7 @@ mod tests {
         let mut mgr = Mgr::new(2);
         mgr.add_credential(1, MockResource(false), caps_for(&[0, 1]));
 
-        mgr.report_rate_limit(1, mask(0), Duration::from_secs(60));
+        mgr.report_rate_limit(1, mask(0), Duration::from_mins(1));
 
         assert!(mgr.get_assigned(mask(0), None).assigned.is_none());
         assert!(mgr.get_assigned(mask(1), None).assigned.is_some());
@@ -856,7 +856,7 @@ mod tests {
         let mut mgr = PerCredMgr::new(3);
         mgr.add_credential(1, MockPerCredResource(false), caps_for(&[0, 1, 2]));
 
-        mgr.report_rate_limit(1, mask(0), Duration::from_secs(60));
+        mgr.report_rate_limit(1, mask(0), Duration::from_mins(1));
 
         assert!(mgr.get_assigned(mask(0), None).assigned.is_none());
         assert!(mgr.get_assigned(mask(1), None).assigned.is_none());
@@ -883,7 +883,7 @@ mod tests {
         mgr.add_credential(1, MockPerCredResource(false), caps_for(&[0]));
         mgr.add_credential(2, MockPerCredResource(false), caps_for(&[0]));
 
-        mgr.report_rate_limit(1, mask(0), Duration::from_secs(60));
+        mgr.report_rate_limit(1, mask(0), Duration::from_mins(1));
         assert_eq!(mgr.get_assigned(mask(0), None).assigned.unwrap().0, 2);
     }
 
@@ -917,7 +917,7 @@ mod tests {
         mgr.add_credential(1, MockResource(false), caps_for(&[0]));
         mgr.add_credential(2, MockResource(false), caps_for(&[0]));
 
-        mgr.report_rate_limit(1, mask(0), Duration::from_secs(60));
+        mgr.report_rate_limit(1, mask(0), Duration::from_mins(1));
 
         let result = mgr.get_assigned(mask(0), Some(1));
         assert!(!result.route_hit);

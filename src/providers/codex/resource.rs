@@ -146,7 +146,7 @@ impl CodexResource {
         let expiry = Utc::now()
             + token_response
                 .expires_in()
-                .unwrap_or(std::time::Duration::from_secs(3600));
+                .unwrap_or(std::time::Duration::from_hours(1));
 
         // Prefer refresh_token from the token response, but fall back to the seed if not present.
         let refresh_token = token_response

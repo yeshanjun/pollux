@@ -3,8 +3,9 @@ use crate::error::{GeminiCliErrorBody, IsRetryable, PolluxError};
 use crate::providers::antigravity::AntigravityActorHandle;
 use crate::providers::policy::classify_upstream_error;
 use crate::providers::provider_endpoints::ProviderEndpoints;
-use crate::providers::upstream_retry::post_json_with_retry;
+use crate::providers::upstream_retry::post_json_bytes_with_retry;
 use crate::utils::logging::with_pretty_json_debug;
+use axum::body::Bytes;
 use backon::{ExponentialBuilder, Retryable};
 use chrono::Utc;
 use pollux_schema::{
@@ -33,6 +34,7 @@ pub struct AntigravityContext {
 
 pub struct AntigravityClient {
     client: reqwest::Client,
+    stream_client: reqwest::Client,
     retry_policy: ExponentialBuilder,
     endpoints: ProviderEndpoints,
 }
@@ -41,6 +43,7 @@ impl AntigravityClient {
     pub fn new(
         cfg: &AntigravityResolvedConfig,
         client: reqwest::Client,
+        stream_client: reqwest::Client,
         base_url: Option<Url>,
     ) -> Self {
         let retry_policy = ExponentialBuilder::default()
@@ -52,6 +55,7 @@ impl AntigravityClient {
 
         Self {
             client,
+            stream_client,
             retry_policy,
             endpoints,
         }
@@ -82,7 +86,11 @@ impl AntigravityClient {
         body: &GeminiGenerateContentRequest,
     ) -> Result<reqwest::Response, PolluxError> {
         let handle = handle.clone();
-        let client = self.client.clone();
+        let client = if ctx.stream {
+            self.stream_client.clone()
+        } else {
+            self.client.clone()
+        };
         let endpoints = self.endpoints.clone();
         let stream = ctx.stream;
         let model = ctx.model.clone();
@@ -148,12 +156,14 @@ impl AntigravityClient {
                         );
                     });
 
-                    let resp = post_json_with_retry(
+                    let request_body = Bytes::from(serde_json::to_vec(&payload)?);
+
+                    let resp = post_json_bytes_with_retry(
                         "Antigravity",
                         &client,
                         endpoints.select(stream),
                         Some(Self::headers(assigned.access_token.as_str())),
-                        &payload,
+                        request_body,
                     )
                     .await?;
 

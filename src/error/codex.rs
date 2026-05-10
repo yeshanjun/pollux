@@ -38,6 +38,10 @@ pub(crate) enum CodexError {
         body: String,
     },
 
+    /// JSON serialization or parsing failure while preparing provider payloads.
+    #[error("JSON error: {0}")]
+    Json(#[from] serde_json::Error),
+
     /// Transport-level failure (DNS, connect, timeouts, etc).
     #[error("HTTP request error: {0}")]
     Reqwest(#[from] reqwest::Error),
@@ -162,6 +166,19 @@ impl IntoResponse for CodexError {
                         code: Some("UPSTREAM_ERROR".to_string()),
                         message: "Upstream service error.".to_string(),
                         r#type: "UPSTREAM_ERROR".to_string(),
+                        param: None,
+                    },
+                )
+            }
+
+            CodexError::Json(e) => {
+                tracing::error!(error = %e, "Codex JSON error");
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    OpenaiResponsesErrorObject {
+                        code: Some("INTERNAL_ERROR".to_string()),
+                        message: "An internal server error occurred.".to_string(),
+                        r#type: "INTERNAL_ERROR".to_string(),
                         param: None,
                     },
                 )

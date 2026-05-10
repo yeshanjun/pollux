@@ -2,9 +2,10 @@ use crate::error::{GeminiCliError, GeminiCliErrorBody, IsRetryable};
 use crate::providers::geminicli::{GeminiCliActorHandle, GeminiContext};
 use crate::providers::policy::classify_upstream_error;
 use crate::providers::provider_endpoints::ProviderEndpoints;
-use crate::providers::upstream_retry::post_json_with_retry;
+use crate::providers::upstream_retry::post_json_bytes_with_retry;
 use crate::utils::logging::with_pretty_json_debug;
 use backon::{ExponentialBuilder, Retryable};
+use axum::body::Bytes;
 use pollux_schema::{
     gemini::GeminiGenerateContentRequest, geminicli::VertexGenerateContentRequest,
 };
@@ -16,6 +17,7 @@ use url::Url;
 #[derive(Clone)]
 pub(crate) struct GeminiClient {
     client: reqwest::Client,
+    stream_client: reqwest::Client,
     retry_policy: ExponentialBuilder,
     endpoints: ProviderEndpoints,
     trace_header: Option<String>,
@@ -24,6 +26,7 @@ pub(crate) struct GeminiClient {
 impl GeminiClient {
     pub fn new(
         client: reqwest::Client,
+        stream_client: reqwest::Client,
         base_url: &Url,
         retry_max_times: usize,
         trace_header: Option<String>,
@@ -37,6 +40,7 @@ impl GeminiClient {
 
         Self {
             client,
+            stream_client,
             retry_policy,
             endpoints,
             trace_header,
@@ -62,7 +66,11 @@ impl GeminiClient {
         let model = &ctx.model;
         let model_mask = ctx.model_mask;
         let stream = ctx.stream;
-        let client = &self.client;
+        let client = if stream {
+            &self.stream_client
+        } else {
+            &self.client
+        };
         let endpoints = &self.endpoints;
         let trace_header = &self.trace_header;
 
@@ -123,12 +131,14 @@ impl GeminiClient {
                     }
                 }
 
-                let resp = post_json_with_retry(
+                let request_body = Bytes::from(serde_json::to_vec(&payload)?);
+
+                let resp = post_json_bytes_with_retry(
                     "GeminiCLI",
                     client,
                     endpoints.select(stream),
                     Some(headers),
-                    &payload,
+                    request_body,
                 )
                 .await?;
                 if !resp.status().is_success() {

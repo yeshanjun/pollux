@@ -1,11 +1,12 @@
 use crate::error::{CodexError, IsRetryable};
 use crate::providers::codex::CodexActorHandle;
 use crate::providers::provider_endpoints::ProviderEndpoints;
-use crate::providers::upstream_retry::post_json_with_retry;
+use crate::providers::upstream_retry::post_json_bytes_with_retry;
 use crate::providers::{ActionForError, policy::classify_upstream_error};
 use crate::server::routes::codex::CodexContext;
 use crate::server::routes::codex::headers::{CodexRequestHeaders, OpenaiRequestHeaders};
 use crate::utils::logging::with_pretty_json_debug;
+use axum::body::Bytes;
 use backon::{ExponentialBuilder, Retryable};
 use pollux_schema::{CodexErrorBody, CodexRequestBody};
 use reqwest::header::{HeaderName, HeaderValue};
@@ -22,6 +23,7 @@ use url::Url;
 #[derive(Clone)]
 pub(crate) struct CodexClient {
     client: reqwest::Client,
+    stream_client: reqwest::Client,
     retry_policy: ExponentialBuilder,
     endpoints: ProviderEndpoints,
     compact_url: Url,
@@ -31,6 +33,7 @@ pub(crate) struct CodexClient {
 impl CodexClient {
     pub(crate) fn new(
         client: reqwest::Client,
+        stream_client: reqwest::Client,
         base_url: &Url,
         retry_max_times: usize,
         trace_header: Option<String>,
@@ -45,6 +48,7 @@ impl CodexClient {
 
         Self {
             client,
+            stream_client,
             retry_policy,
             endpoints,
             compact_url,
@@ -74,14 +78,21 @@ impl CodexClient {
         body: &CodexRequestBody,
         inbound_headers: &OpenaiRequestHeaders,
     ) -> Result<reqwest::Response, CodexError> {
-        let client = &self.client;
+        let client = if ctx.stream {
+            &self.stream_client
+        } else {
+            &self.client
+        };
         let endpoints = &self.endpoints;
         let trace_header = &self.trace_header;
         let model = &ctx.model;
         let model_mask = ctx.model_mask;
         let stream = ctx.stream;
+        let request_body = Bytes::from(serde_json::to_vec(body)?);
 
-        let op = move || async move {
+        let op = move || {
+            let request_body = request_body.clone();
+            async move {
             let start = Instant::now();
             let lease = handle
                 .get_credential(model_mask, ctx.route_key)
@@ -124,12 +135,12 @@ impl CodexClient {
                 }
             }
 
-            let resp = post_json_with_retry(
+            let resp = post_json_bytes_with_retry(
                 "Codex",
                 client,
                 endpoints.select(stream),
                 Some(upstream_headers),
-                body,
+                request_body,
             )
             .await?;
 
@@ -204,6 +215,7 @@ impl CodexClient {
             }
 
             Err(final_error)
+            }
         };
 
         op.retry(&self.retry_policy)
@@ -230,8 +242,11 @@ impl CodexClient {
         let trace_header = &self.trace_header;
         let model = &ctx.model;
         let model_mask = ctx.model_mask;
+        let request_body = Bytes::from(serde_json::to_vec(body)?);
 
-        let op = move || async move {
+        let op = move || {
+            let request_body = request_body.clone();
+            async move {
             let start = Instant::now();
             let lease = handle
                 .get_credential(model_mask, ctx.route_key)
@@ -260,9 +275,14 @@ impl CodexClient {
                 }
             }
 
-            let resp =
-                post_json_with_retry("Codex", client, compact_url, Some(upstream_headers), body)
-                    .await?;
+            let resp = post_json_bytes_with_retry(
+                "Codex",
+                client,
+                compact_url,
+                Some(upstream_headers),
+                request_body,
+            )
+            .await?;
 
             if resp.status().is_success() {
                 return Ok(resp);
@@ -301,6 +321,7 @@ impl CodexClient {
             );
 
             Err(final_error)
+            }
         };
 
         op.retry(&self.retry_policy)

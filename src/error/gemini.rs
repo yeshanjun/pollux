@@ -43,6 +43,10 @@ pub enum GeminiCliError {
         body: String,
     },
 
+    /// JSON serialization or parsing failure while preparing provider payloads.
+    #[error("JSON error: {0}")]
+    Json(#[from] serde_json::Error),
+
     /// Transport-level failure (DNS, connect, timeouts, etc).
     #[error("HTTP request error: {0}")]
     Reqwest(#[from] reqwest::Error),
@@ -170,6 +174,18 @@ impl IntoResponse for GeminiCliError {
                         StatusCode::BAD_GATEWAY,
                         "UNAVAILABLE",
                         "Upstream service error.",
+                    ),
+                )
+            }
+
+            GeminiCliError::Json(e) => {
+                tracing::error!(error = %e, "Gemini JSON error");
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    GeminiErrorObject::for_status(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "INTERNAL",
+                        "An internal server error occurred.",
                     ),
                 )
             }

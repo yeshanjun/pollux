@@ -19,7 +19,8 @@ pub async fn antigravity_proxy_handler(
     let caller = AntigravityClient::new(
         state.providers.antigravity_cfg.as_ref(),
         state.antigravity_client.clone(),
-        None,
+        state.antigravity_stream_client.clone(),
+        Some(state.providers.antigravity_cfg.api_url.clone()),
     );
 
     let upstream_resp = caller
